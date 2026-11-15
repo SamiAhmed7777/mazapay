@@ -280,7 +280,8 @@ class TestDecodeMatrixInput(unittest.TestCase):
 @net_gate
 class TestServedQrDecodesToAddress(unittest.TestCase):
     """The money proof: decode the SVG bytes the server actually delivers and
-    require the order's deposit address — what a payer's scanner reads."""
+    require the official maza: payment URI (address + amount) — what a
+    payer's scanner reads."""
 
     @classmethod
     def setUpClass(cls):
@@ -321,7 +322,17 @@ class TestServedQrDecodesToAddress(unittest.TestCase):
         )
         with urllib.request.urlopen(req2, timeout=5) as resp:
             svg = resp.read().decode("utf-8")
-        self.assertEqual(qrdecode.decode_svg(svg), order["address"])
+        self.assertEqual(
+            qrdecode.decode_svg(svg),
+            qr.payment_uri(order["address"], order["maza_amount"]),
+        )
+        # Structural (non-tautological) checks: official scheme, bare address
+        # path, and an amount param present with no separator noise.
+        decoded = qrdecode.decode_svg(svg)
+        self.assertTrue(decoded.startswith("maza:"), decoded)
+        self.assertEqual(decoded.split("?")[0], f"maza:{order['address']}")
+        self.assertIn("?amount=", decoded)
+        self.assertNotIn(",", decoded)
 
 
 class TestIsoPadBytePattern(unittest.TestCase):

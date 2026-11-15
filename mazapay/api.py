@@ -1142,14 +1142,15 @@ class Handler(BaseHTTPRequestHandler):
     def _order_qr(self, order_id: str) -> None:
         # Same public-collect visibility as _order_get: inbound orders only,
         # existence never leaked for outbound ids. The SVG body contains only
-        # the boolean module matrix of the address (see mazapay.qr) — no
+        # the boolean module matrix of the maza: payment URI (address + amount,
+        # the scheme the official wallet parses — see mazapay.qr) — no other
         # order fields, no user-controlled text — so the document is inert.
         order = store.get_order(order_id)
         if not order:
             raise ApiError(404, f"order {order_id} not found")
         if order["kind"] != "in" and not self._authorized():
             raise ApiError(404, f"order {order_id} not found")
-        body = qr.address_svg(order["address"]).encode("utf-8")
+        body = qr.address_svg(qr.payment_uri(order["address"], order["maza_amount"])).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "image/svg+xml")
         self.send_header("Cache-Control", "no-store")

@@ -239,6 +239,47 @@ class TestSvgRenderer(unittest.TestCase):
 
 
 @net_gate
+class TestPaymentUri(unittest.TestCase):
+    """maza: payment URI builder — the format the official wallet parses
+    (MazaCoin/maza src/qt/guiutil.cpp: scheme "maza", amount = decimal MAZA
+    at BTC-unit precision, "." point, no separators)."""
+
+    def test_basic_address_and_amount(self):
+        self.assertEqual(
+            qr.payment_uri("MAADDR1", "813.66"),
+            "maza:MAADDR1?amount=813.66",
+        )
+
+    def test_amount_from_float_real(self):
+        # SQLite REAL arrives as float; Decimal(str()) keeps 2dp quotes exact
+        self.assertEqual(
+            qr.payment_uri("MAADDR1", 813.66), "maza:MAADDR1?amount=813.66"
+        )
+
+    def test_trailing_zeros_stripped_not_exponent(self):
+        self.assertEqual(
+            qr.payment_uri("MAADDR1", "800.00000000"), "maza:MAADDR1?amount=800"
+        )
+        self.assertEqual(
+            qr.payment_uri("MAADDR1", 800.0), "maza:MAADDR1?amount=800"
+        )
+
+    def test_eight_decimals_bounded(self):
+        self.assertEqual(
+            qr.payment_uri("MAADDR1", "0.001229123456"),
+            "maza:MAADDR1?amount=0.00122912",
+        )
+
+    def test_none_amount_omits_param(self):
+        self.assertEqual(qr.payment_uri("MAADDR1", None), "maza:MAADDR1")
+
+    def test_empty_address_rejected(self):
+        with self.assertRaises(ValueError):
+            qr.payment_uri("", "1")
+        with self.assertRaises(ValueError):
+            qr.payment_uri(None, "1")  # type: ignore[arg-type]
+
+
 class TestQrEndpoint(unittest.TestCase):
     """GET /orders/{id}/qr.svg over a real HTTP server (token-auth mode)."""
 

@@ -182,10 +182,11 @@ http://127.0.0.1:8443/
    shows the exact MAZA amount to send, the locked rate, and a
    countdown — the quote is good for **15 minutes** by default.
 3. The page shows a **QR code** in a framed tile under **"Scan with
-   your MazaCoin wallet"** — scanning fills in the address in most wallet
-   apps (it is the address only; you still enter the amount yourself).
-   The address itself is printed below, with a **Copy address** button as
-   the always-usable fallback. Send *exactly* the quoted MAZA amount to
+   your MazaCoin wallet"** — scanning pre-fills the address *and* the
+   amount in the MazaCoin desktop wallet (the QR carries the official
+   `maza:` payment link). The address itself is printed below, with a
+   **Copy address** button as the always-usable fallback for apps that
+   only read bare addresses. Send *exactly* the quoted MAZA amount to
    this address. (A little *more* is fine and still credits; *less* will
    not register.)
 4. A four-step progress line tracks the payment: **Quote locked →

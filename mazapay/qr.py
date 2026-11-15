@@ -1,25 +1,51 @@
-"""QR-code SVG rendering for the checkout page (deposit address → code).
+"""QR-code SVG rendering for the checkout page (payment request → code).
 
-Payload convention (deliberate): the QR encodes the BARE deposit address.
-The MazaCoin ecosystem has no established payment-URI scheme (mazacoin.org's
-own homepage still carries a "(maza address and QR code go here)" placeholder;
-the official paper-wallet generator scans bare addresses), and an invented
-"scheme:addr?amount=x" string would scan as plain text in most mobile wallet
-apps — worse for the payer than a clean address. The amount stays as displayed
-text on the page; payment matching is by address watch and the page already
-instructs "Send exactly this amount". If a community convention emerges
-(Payu's call), the payload is one string at the call site in api.py.
+Payload convention (flipped 2026-11-15, Sami directive "do it" after the
+scheme was verified in the official codebase): the QR encodes the official
+`maza:` payment URI — `maza:<address>?amount=<decimal MAZA>` — exactly the
+format MazaCoin's own wallet code implements and generates (MazaCoin/maza
+src/qt/guiutil.cpp: parseBitcoinURI accepts scheme "maza" with amount/label/
+message params and req- rejection semantics; formatBitcoinURI emits
+"maza:%1?amount=%2"; the running v0.16.3 maza-qt binary contains the scheme
+strings). Scanning pre-fills address AND amount in the official desktop
+wallet. The page keeps the address text + Copy address button as the
+fallback for scanners that only read bare addresses (paper wallets).
+
+Amount formatting mirrors the wallet's own output: decimal with a "." point,
+no thousands separators, trailing zeros stripped, quantized to 8 decimals
+(the wallet parses at BitcoinUnits::BTC precision). No order data beyond
+address + amount ever enters the SVG text — only the boolean matrix — so
+the document has no injection surface.
 
 Encoder: the vendored pure-Python library (Project Nayuki, MIT) — see
 mazapay/vendor/__init__.py for the provenance pin. This module renders the
 library's boolean module matrix to a self-contained SVG: white background
 (the spec quiet zone AND scannability on the dark checkout card), one <path>
-of unit squares. No order data ever enters the SVG text — only the boolean
-matrix — so the document has no injection surface.
+of unit squares.
 """
+from decimal import Decimal
 from typing import List
 
 from .vendor import qrcodegen
+
+
+def payment_uri(address: str, maza_amount) -> str:
+    """Build the official maza: payment URI (BIP-21 semantics, MazaCoin form).
+
+    maza_amount arrives as the order's stored REAL (float via SQLite);
+    Decimal(str(value)) keeps typical 2dp quotes exact and quantizing to
+    8dp bounds any float tail. format(..., "f") after normalize() avoids
+    exponent forms ("8E+2") the wallet parser would misread as the address.
+    """
+    if not isinstance(address, str) or not address:
+        raise ValueError("payment_uri: address must be a non-empty string")
+    if maza_amount is None:
+        return f"maza:{address}"
+    d = Decimal(str(maza_amount)).quantize(Decimal("1E-8"))
+    amount = format(d.normalize(), "f")
+    if amount in ("", "-0"):
+        amount = "0"
+    return f"maza:{address}?amount={amount}"
 
 # ISO/IEC 18004 quiet zone: 4 modules on every side.
 QUIET_ZONE_MODULES = 4

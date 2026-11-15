@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.6.1 — 2026-11-15
+
+- Checkout QR now encodes the official `maza:` payment URI — `maza:<address>?amount=<MAZA>` — the scheme implemented and emitted by MazaCoin's own wallet code (verified in MazaCoin/maza src/qt/guiutil.cpp and the running v0.16.3 binaries). Scanning pre-fills address + amount in the official desktop wallet. Address text + Copy button remain as the bare-address fallback. New `mazapay.qr.payment_uri()`; endpoint + decoder tests updated to the URI contract; 6 new builder tests.
+
 ## 0.6.0 — 2026-11-15
 
 **Branded checkout page.** The member-facing page is now a product-quality
