@@ -18,9 +18,10 @@ WorkingDirectory=/opt/mazapay/current
 EnvironmentFile=-/etc/mazapay.env
 # Explicit bind, loopback-only behind the Caddy TLS proxy (audit 4.3):
 # the per-IP order cap trusts X-Forwarded-For only because the listener
-# is loopback-bound.
+# is loopback-bound. PORT NOTE: keep in sync with LISTEN_PORT in
+# deploy/service/install-bridge.sh — 8443 collides with SamiPanel (*:8443).
 Environment=MAZAPAY_HOST=127.0.0.1
-Environment=MAZAPAY_PORT=8443
+Environment=MAZAPAY_PORT=18500
 # Production data paths (override dev defaults from config.py);
 # StateDirectory provisions /var/lib/mazapay with correct ownership.
 Environment=MAZAPAY_DB=/var/lib/mazapay/mazapay.sqlite3

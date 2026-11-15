@@ -37,7 +37,10 @@ CADDY_BACKUP_SUFFIX=".pre-mazapay"
 RPC_CONF="/var/lib/mazad/maza.conf"
 RUN_USER="mazapay"
 LISTEN_HOST="127.0.0.1"
-LISTEN_PORT="8443"
+# 18500: loopback behind Caddy. 8443 is UNUSABLE on samihost — SamiPanel binds
+# *:8443 (wildcard covers loopback; the unit's bind crash-loops Errno 98 and
+# the health probe reads SamiPanel's 404). Found live 2026-11-15.
+LISTEN_PORT="18500"
 CADDY_DOMAIN="mazapay.sami-ahmed.net"
 HOST_PUB_IP="194.163.161.162"   # samihost public v4 — the DNS gate's expected A record
 LEGACY_PORT="18443"
@@ -256,8 +259,12 @@ if [ -z "${SANDBOX_ROOT:-}" ]; then
     fi
 fi
 
-# Port 8443 must be free — or held by OUR OWN unit on a rerun.
-port_line="$(ss -tln 2>/dev/null | grep -E "127\.0\.0\.1:${LISTEN_PORT}\b" || true)"
+# The listen port must be free — or held by OUR OWN unit on a rerun.
+# Match ANY local address ending in :<port> (127.0.0.1:*, *:*, [::]:*,
+# 0.0.0.0:*): a wildcard holder binds loopback too, so a loopback-only grep
+# would sail past it and the unit would crash-loop on bind (found live:
+# SamiPanel holds *:8443 on samihost).
+port_line="$(ss -tln 2>/dev/null | awk -v p=":${LISTEN_PORT}\$" '$4 ~ p {print}' || true)"
 if [ -n "$port_line" ]; then
     if ! systemctl cat mazapay.service >/dev/null 2>&1; then
         fail 3 "port ${LISTEN_PORT} already held and mazapay.service is not installed: $port_line"

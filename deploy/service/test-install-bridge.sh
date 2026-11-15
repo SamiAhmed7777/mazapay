@@ -109,7 +109,8 @@ exit 0
 EOF
     cat > "$sbx/shims/ss" <<'EOF'
 #!/bin/sh
-[ "${SS_HOLD_8443:-0}" = "1" ] && echo 'LISTEN 0 5 127.0.0.1:8443 0.0.0.0:*'
+[ "${SS_HOLD_LISTEN:-0}" = "1" ] && echo 'LISTEN 0 5 127.0.0.1:18500 0.0.0.0:*'
+[ "${SS_HOLD_WILDCARD:-0}" = "1" ] && echo 'LISTEN 0 5 *:18500 0.0.0.0:*'
 if [ "${SS_LEGACY:-0}" = "1" ]; then
     echo "LISTEN 0 5 127.0.0.1:${SS_LEGACY_PORT:-18999} 0.0.0.0:* users:((\"python3\",pid=${SS_PID:-4242},fd=3))"
 fi
@@ -151,6 +152,12 @@ leak_check() { # $1 = sbx — the fixture rpc secret must appear NOWHERE in the 
     fi
 }
 
+echo "== S0: cross-file consistency — unit MAZAPAY_PORT == installer LISTEN_PORT"
+uport="$(grep -oE '^Environment=MAZAPAY_PORT=[0-9]+' "$REAL_UNIT" | cut -d= -f3)"
+iport="$(grep -oE '^LISTEN_PORT="[0-9]+"' "$INSTALLER" | tr -d '"' | cut -d= -f2)"
+eq() { [ "$1" = "$2" ] && [ -n "$1" ]; }
+ck "unit MAZAPAY_PORT ($uport) == installer LISTEN_PORT ($iport), both nonempty" eq "$uport" "$iport"
+
 echo "== S1: fresh install, happy path"
 sbx="$(new_sbx s1)"
 rc="$(run_install "$sbx")"
@@ -170,7 +177,7 @@ ck "caddy block begins" file_has "$sbx/etc/caddy/Caddyfile" "# BEGIN mazapay-bri
 ck "caddy block ends" file_has "$sbx/etc/caddy/Caddyfile" "# END mazapay-bridge managed block"
 ck "health blocked at edge" file_has "$sbx/etc/caddy/Caddyfile" "respond @healthcheck 403"
 ck "admin routes off public vhost" file_has "$sbx/etc/caddy/Caddyfile" "@adminsurface path /vendors"
-ck "reverse proxy target" file_has "$sbx/etc/caddy/Caddyfile" "reverse_proxy 127.0.0.1:8443"
+ck "reverse proxy target" file_has "$sbx/etc/caddy/Caddyfile" "reverse_proxy 127.0.0.1:18500"
 ck "original caddy site kept" file_has "$sbx/etc/caddy/Caddyfile" "sbxsites.example"
 ck "user shim ran" [ -f "$sbx/user_added" ]
 ck "service started" grep -q "systemctl start mazapay.service" "$sbx/logs/systemctl.log"
@@ -290,9 +297,17 @@ ck "fresh-install unit removed" [ ! -e "$sbx/etc/systemd/system/mazapay.service"
 ck "staged release discarded" [ -z "$(ls -A "$sbx/opt/releases" 2>/dev/null)" ]
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
-echo "== S9: foreign process holds 8443 -> abort 3"
+echo "== S9: foreign process holds the listen port (loopback) -> abort 3"
 sbx="$(new_sbx s9)"
-rc="$(run_install "$sbx" SS_HOLD_8443=1)"
+rc="$(run_install "$sbx" SS_HOLD_LISTEN=1)"
+ck "exit code is 3" rc_is "$rc" 3
+ck "no unit written" [ ! -e "$sbx/etc/systemd/system/mazapay.service" ]
+ck "no caddy block" not_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S9b: WILDCARD holder on the listen port (binds loopback too) -> abort 3"
+sbx="$(new_sbx s9b)"
+rc="$(run_install "$sbx" SS_HOLD_WILDCARD=1)"
 ck "exit code is 3" rc_is "$rc" 3
 ck "no unit written" [ ! -e "$sbx/etc/systemd/system/mazapay.service" ]
 ck "no caddy block" not_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge"
