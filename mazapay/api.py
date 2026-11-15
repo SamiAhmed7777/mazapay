@@ -451,7 +451,7 @@ _ROUTES = [
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "MazaPay/0.3"
+    server_version = "MazaPay/0.3.1"
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002  (stdlib name)
         pass

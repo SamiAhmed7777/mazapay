@@ -106,6 +106,28 @@ public — they create watch addresses and lock quotes, nothing spends.
 Receiving is watch-compatible; sending (`/payments`) spends from the
 wallet, so run it on a machine whose wallet you back up.
 
+### Bring your own daemon (no agent needed)
+
+Anyone can run the daemon the bridge talks to — any machine, no fleet
+resources used. The bridge is config-only on its side:
+
+```bash
+python3 -m mazapay.check_daemon          # auto-detects maza.conf
+python3 -m mazapay.check_daemon http://user:pass@host:12832
+```
+
+The checker speaks plain English: it probes the six RPC calls the bridge
+needs, explains each failure with its fix ("Is mazad running?", "re-check
+rpcuser/rpcpassword", "unlock the wallet"), verifies the send surface
+*without moving any funds* (it probes with an intentionally invalid
+amount), warns when the wallet balance is zero, prints the exact
+`MAZAPAY_MAZAD_RPC=...` line to paste, and never prints your password.
+Exit code 0 = ready; `--json` for scripting.
+
+The daemon can live anywhere — the RPC endpoint reaches the bridge over
+localhost, Tailscale, or an SSH reverse tunnel (the provider's box needs
+no open ports at all).
+
 ### Deployment
 
 A hardened systemd unit ships in `deploy/mazapay.service` (dedicated user,
@@ -117,6 +139,7 @@ mode 0600). CI runs the suite on Python 3.10–3.13 on every push.
 | Env var | Default | Meaning |
 |---|---|---|
 | `MAZAPAY_MAZAD_RPC` | *(empty → mock)* | maza wallet JSON-RPC URL |
+| `MAZAPAY_MAZAD_RPC_USER` / `MAZAPAY_MAZAD_RPC_PASSWORD` | *(empty)* | wallet RPC credentials (alternatively embedded URL-encoded in `MAZAPAY_MAZAD_RPC`) |
 | `MAZAPAY_API_TOKEN` | *(empty → open mode)* | bearer token; REQUIRED in real-wallet mode |
 | `MAZAPAY_PRICE_SOURCE` | `paprika` | `paprika` \| `lore` \| `fixed` |
 | `MAZAPAY_ALLOW_FIXED_PRICE` | `0` | allow auditable `fixed-fallback` when the live feed fails (also required to run `fixed` source against a real wallet) |

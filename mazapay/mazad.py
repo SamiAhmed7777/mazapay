@@ -14,6 +14,8 @@ import base64
 import json
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
+import urllib.error
+import urllib.parse
 import urllib.request
 
 from . import config
@@ -36,15 +38,29 @@ class MazadRPC:
         self.url = url or config.MAZAD_RPC_URL
         self.user = user if user is not None else config.MAZAD_RPC_USER
         self.password = password if password is not None else config.MAZAD_RPC_PASSWORD
+        # URL-embedded credentials (user:pass@host) are honored when no
+        # separate user/password was provided — the url-only configuration
+        # path must work for operators who prefer it.
+        parts = urllib.parse.urlsplit(self.url)
+        if parts.username and not self.user:
+            self.user = urllib.parse.unquote(parts.username)
+        if parts.password and not self.password:
+            self.password = urllib.parse.unquote(parts.password)
         self.timeout = timeout or config.MAZAD_RPC_TIMEOUT
 
     def rpc(self, method: str, *params: Any) -> Any:
         payload = json.dumps(
             {"jsonrpc": "1.0", "id": "mazapay", "method": method, "params": list(params)}
         ).encode("utf-8")
+        # Credentials ride in the Authorization header only. If the operator
+        # embedded user:pass in the URL, strip it from the request target -
+        # urllib would otherwise resolve "user:pass@host" as a hostname
+        # (gaierror -2). Header auth + stripped URL works for both shapes.
+        parts = urllib.parse.urlsplit(self.url)
+        host_port = parts.netloc.rsplit("@", 1)[-1]
         raw = f"{self.user}:{self.password}".encode("utf-8")
         req = urllib.request.Request(
-            self.url,
+            urllib.parse.urlunsplit(("http", host_port, parts.path or "/", "", "")),
             data=payload,
             headers={
                 "Content-Type": "application/json",

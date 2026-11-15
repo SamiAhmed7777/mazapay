@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.3.1 — 2026-11-15
+
+**Bring your own daemon, safely.** New `python3 -m mazapay.check_daemon`
+self-test: auto-detects `maza.conf`, probes every RPC call the bridge
+needs (including `validateaddress`), explains each failure in plain
+English with its fix, verifies the send surface without moving funds
+(probes with an intentionally invalid amount), warns on zero balance,
+prints paste-ready bridge settings without displaying the password, and
+emits JSON-only output in `--json` mode (configuration errors are JSON
+error objects). Exit 0 = ready.
+
+Fixed: RPC requests with credentials embedded in the URL (`user:pass@host`)
+failed DNS resolution under Python 3.14's urllib — both the checker and
+`MazadRPC` now strip userinfo from the request target and authenticate
+exclusively via the Authorization header (regression tests against a real
+local HTTP server). `MazadRPC` also honors URL-embedded credentials when
+no separate user/password is configured. HTTP 401/403 responses are
+classified as credential failures, not transport errors. The balance
+check tolerates malformed daemon replies. Test suite shares one sandbox
+module: with no writable temp dir every test skips and discovery exits 0.
+
 ## 0.3.0 — 2026-11-14
 
 Member-facing checkout page at `GET /` (quote → address → confirmation,

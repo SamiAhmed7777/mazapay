@@ -8,7 +8,6 @@ input parsing, and the fail-closed real-mode startup guards.
 import json
 import os
 import sqlite3
-import tempfile
 import unittest
 import urllib.error
 import urllib.request
@@ -16,47 +15,22 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest import mock
 
+try:
+    import _sandbox as _env
+except ImportError:  # package-style invocation (python3 -m unittest tests.test_x)
+    from tests import _sandbox as _env  # type: ignore
+
+_age_claims = _env._age_claims
+requires_writable = _env.requires_writable
+net_gate = _env.net_gate  # for API-server test classes (bind local HTTP servers)
+
 
 def run_concurrent(fn: Callable[[int], Any], n: int = 2) -> List[Any]:
     """Run fn(i) for i in range(n) on parallel threads (for race tests)."""
     with ThreadPoolExecutor(max_workers=n) as pool:
         return list(pool.map(fn, range(n)))
 
-
-def _age_claims(db_path: str, seconds: int = 3600) -> None:
-    """Backdate export leases to simulate a recovery run after a crash."""
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.execute(
-            "UPDATE orders SET export_lease_ts = export_lease_ts - ?"
-            " WHERE export_state='claimed'",
-            (seconds,),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-# Configure the env BEFORE importing mazapay modules (config reads env at import).
-# Runner-safe degradation: when no writable temp dir exists (read-only sandbox),
-# every test class is SKIPPED via skipUnless and discovery exits 0 — never a
-# module-level SystemExit (which unittest would report as an import failure).
-try:
-    _TMP = tempfile.mkdtemp(prefix="mazapay-test-", dir=os.environ.get("MAZAPAY_TEST_TMP") or None)
-    _WRITABLE_TMP = True
-except OSError:
-    _WRITABLE_TMP = False
-    _TMP = ""
-if _WRITABLE_TMP:
-    os.environ["MAZAPAY_DB"] = os.path.join(_TMP, "test.sqlite3")
-    os.environ["MAZAPAY_MIP_EXPORT_DIR"] = os.path.join(_TMP, "mip")
-os.environ["MAZAPAY_PRICE_SOURCE"] = "fixed"
-os.environ["MAZAPAY_FIXED_USD_PRICE"] = "0.002"
-os.environ["MAZAPAY_MAZAD_RPC"] = ""  # mock chain
-os.environ["MAZAPAY_RATE_LOCK_SECONDS"] = "60"
-
-_SKIP_REASON = (
-    "no writable temp dir for the test store; set MAZAPAY_TEST_TMP to a writable path to run"
-)
+# _sandbox configured MAZAPAY_DB / MAZAPAY_MIP_EXPORT_DIR / price source.
 
 from decimal import Decimal  # noqa: E402
 
@@ -64,7 +38,7 @@ from mazapay import api, config, mip_export, pricing, store, watcher  # noqa: E4
 from mazapay.mazad import MockChain, get_chain  # noqa: E402
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@requires_writable
 class TestPricing(unittest.TestCase):
     def test_quote_math_fixed_price(self):
         maza, rate, source = pricing.quote_maza(50.0)
@@ -124,8 +98,15 @@ class TestPricing(unittest.TestCase):
             config.PRICE_SOURCE, config.ALLOW_FIXED_PRICE = old_src, old_allow
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@requires_writable
 class TestStore(unittest.TestCase):
+    def setUp(self) -> None:
+        # unittest runs classes ALPHABETICALLY, so TestApiEndToEnd's setUpClass
+        # (which also calls init_db) may be SKIPPED in socket-restricted
+        # sandboxes - every store-backed class must initialize its own schema.
+        # init_db is idempotent (CREATE TABLE IF NOT EXISTS + tolerant _migrate).
+        store.init_db()
+
     def test_vendor_roundtrip(self):
         v = store.create_vendor("Ponca Tribe Demo", "PONCA", "MADDR1", "demo vendor")
         got = store.get_vendor(v["id"])
@@ -177,7 +158,7 @@ class TestStore(unittest.TestCase):
                                initial_status="pending_send", nonce="nonceA")
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@requires_writable
 class TestMockChain(unittest.TestCase):
     def setUp(self):
         self.chain = MockChain()
@@ -225,8 +206,11 @@ class TestMockChain(unittest.TestCase):
         self.assertEqual(self.chain.last_scan_count, config.TX_SCAN_LIMIT)
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@requires_writable
 class TestWatcher(unittest.TestCase):
+    def setUp(self) -> None:
+        store.init_db()  # order-independent schema (see TestStore.setUp)
+
     def test_pending_not_paid_below_confirmations(self):
         chain, mode = get_chain()
         o = store.create_order(
@@ -273,9 +257,10 @@ class TestWatcher(unittest.TestCase):
         self.assertIsNotNone(late["txid"])
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@requires_writable
 class TestMipExport(unittest.TestCase):
     def setUp(self):
+        store.init_db()  # order-independent schema (see TestStore.setUp)
         # Flush any un-exported orders left by earlier test classes so each
         # export test below asserts on exactly the rows it creates.
         store.mark_exported(
@@ -456,7 +441,7 @@ class TestMipExport(unittest.TestCase):
         self.assertEqual(reexport["rows"], 0)
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@net_gate
 class TestApiEndToEnd(unittest.TestCase):
     """Real HTTP against a real server thread: quote -> fund -> watch -> export."""
 
@@ -907,7 +892,7 @@ class TestApiEndToEnd(unittest.TestCase):
             self.assertEqual(len(superseded_tx), 1)  # exactly the retry's broadcast
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@net_gate
 class TestAuth(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1005,7 +990,7 @@ class TestAuth(unittest.TestCase):
             config.API_TOKEN = old
 
 
-@unittest.skipUnless(_WRITABLE_TMP, _SKIP_REASON)
+@requires_writable
 class TestRealModeGuards(unittest.TestCase):
     def test_real_wallet_without_token_refused(self):
         old_rpc, old_tok = config.MAZAD_RPC_URL, config.API_TOKEN
