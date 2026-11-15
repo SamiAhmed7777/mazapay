@@ -283,6 +283,44 @@ session file rather than leaving you two half-finished files.
 
 ---
 
+## Step 5 — See all your orders in one page
+
+When you want an overview — what's awaiting payment, what's paid, what
+was exported — open the bridge's dashboard page in a browser:
+
+```
+http://localhost:8443/admin
+```
+
+The page asks for a login: leave the username blank (or any word) and
+enter the bridge's token as the **password** — the same token from
+Step 2. (If you'd rather script it: `curl -H "Authorization: Bearer
+***" localhost:8443/admin` shows the same data as HTML, and adding
+`?format=json` gives a machine-readable version.)
+
+What you'll see:
+
+- **Status chips** at the top — how many orders are awaiting, paid,
+  late, refunded, and so on.
+- **The order table**, newest first: when it was created, its order ID
+  (member payments link to their public checkout page), kind (in =
+  money received, out = money sent), status, amounts, the locked
+  exchange rate and where it came from, the transaction ID, and the
+  reference text.
+- **Export links** at the bottom — the same two MIP CSV exports as
+  Step 4, one click each.
+
+Handy filters (add them to the URL): `?kind=in` or `?kind=out` for
+received vs. sent, `?status=paid` for one status,
+`?limit=20` for a shorter page (up to 500).
+
+The dashboard is read-only — nothing you do on the page can move
+money or change an order. One security note: the browser login sends
+the token as base64 (not encrypted by itself), so open the dashboard
+only over the bridge's HTTPS address or on the machine it runs on.
+
+---
+
 ## Troubleshooting
 
 ### "The explorer shows my payment, but the order still says awaiting"

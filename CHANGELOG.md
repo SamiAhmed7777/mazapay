@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0 — 2026-11-15
+
+**Operator dashboard.** New token-protected `GET /admin`: a
+server-rendered, script-free HTML page showing status counts and a
+newest-first order table (amounts, locked rate + source, txid, ref,
+vendor), filterable by `?kind=`/`?status=` and bounded by `?limit=`
+(default 100, ceiling 500 so a large store can never produce an
+unbounded response). `?format=json` returns the same snapshot for
+scripts and agents. Outbound order ids render as plain text — matching
+the public-visibility rule that never leaks payment rows to
+unauthenticated readers. Every interpolated field is HTML-escaped;
+the page contains no JavaScript.
+
+To make the dashboard usable from a plain browser, every tokened route
+now also accepts HTTP **Basic** auth with the same token as the
+password (username ignored) — same constant-time comparison, same
+never-logged guarantee; Bearer remains the documented form for scripts.
+
 ## 0.4.0 — 2026-11-15
 
 **Deposit and confirmation alerts.** The watcher now notifies on two

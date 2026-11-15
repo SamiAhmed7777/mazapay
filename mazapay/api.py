@@ -4,8 +4,9 @@ Safety model (v0.3 — reworked across judge rounds 1-4):
 
 - AUTH: when MAZAPAY_API_TOKEN is set, every endpoint except GET /health,
   GET / (the public checkout page), and the member-facing collect routes
-  (POST /orders, GET /orders/{id}) requires 'Authorization: Bearer <token>'
-  (constant-time compare). The collect routes are public because they only
+  (POST /orders, GET /orders/{id}) requires 'Authorization: Bearer ***'
+  (or Basic auth with the token as the password, so a browser can prompt —
+  constant-time compare). The collect routes are public because they only
   create a watch address and lock a quote — no money moves — while every
   spending or administrative endpoint stays tokened. A real wallet RPC
   REFUSES to serve without a token — fail closed, because POST /payments
@@ -41,8 +42,13 @@ Endpoints:
   POST /payments/{id}/retry           — re-broadcast a send_failed payment
   POST /watch                         — run one watcher pass now
   GET  /export/mip?kind=in|out        — write + return a MIP CSV session
+  GET  /admin                         — orders dashboard (HTML page for
+      operators, JSON via ?format=json): status counts + newest-first order
+      list, filterable by ?kind=in|out and ?status=, bounded by ?limit=
 """
+import base64
 import hmac
+import html
 import json
 import logging
 import os
@@ -528,6 +534,7 @@ _ROUTES = [
     ("POST", re.compile(r"^/payments/([\w-]+)/retry$"), "payment_retry", True),
     ("POST", re.compile(r"^/watch$"), "watch_post", True),
     ("GET", re.compile(r"^/export/mip$"), "export_get", True),
+    ("GET", re.compile(r"^/admin$"), "admin_get", True),
 ]
 
 
@@ -551,6 +558,161 @@ def _check_intake_caps(client_ip: str) -> None:
             "too many open orders from your address; retry later",
             headers={"Retry-After": str(config.ORDER_RETRY_AFTER_SECONDS)},
         )
+
+
+# --- admin dashboard ----------------------------------------------------------
+
+def _admin_query(raw: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], int, str]:
+    """Parse + validate /admin query params -> (kind, status, limit, format).
+
+    kind/status mirror store.list_orders; format picks html (default) or json;
+    limit bounds the page (1..ADMIN_MAX_LIMIT, default ADMIN_PAGE_LIMIT).
+    Anything malformed is a 400 — the dashboard never guesses.
+    """
+    kind = (raw.get("kind") or [""])[0] or None
+    if kind is not None and kind not in ("in", "out"):
+        raise ApiError(400, "kind must be 'in' or 'out'")
+    # status is free-form BY DESIGN: an unknown status is a valid filter that
+    # simply matches nothing (an empty page is a truthful answer), and the
+    # status vocabulary grows with product states — it is not a fixed enum.
+    status = (raw.get("status") or [""])[0] or None
+    fmt = ((raw.get("format") or [""])[0] or "").lower()
+    if fmt not in ("", "html", "json"):
+        raise ApiError(400, "format must be 'html' or 'json'")
+    raw_limit = (raw.get("limit") or [""])[0]
+    try:
+        limit = int(raw_limit) if raw_limit else config.ADMIN_PAGE_LIMIT
+    except (TypeError, ValueError, OverflowError):
+        raise ApiError(400, "limit must be an integer") from None
+    if not 1 <= limit <= config.ADMIN_MAX_LIMIT:
+        raise ApiError(400, f"limit must be between 1 and {config.ADMIN_MAX_LIMIT}")
+    return kind, status, limit, fmt or "html"
+
+
+def admin_snapshot(kind: Optional[str], status: Optional[str], limit: int) -> Dict[str, Any]:
+    """Read-only view behind GET /admin: counts over the whole filtered set,
+    newest-first bounded order page. No chain calls, no state changes."""
+    rows = store.list_orders(kind=kind, status=status)
+    counts: Dict[str, int] = {}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    shown = list(reversed(rows))[:limit]
+    return {
+        "filters": {"kind": kind or "all", "status": status or "all", "limit": limit},
+        "total": len(rows),
+        "shown": len(shown),
+        "counts": counts,
+        "orders": shown,
+    }
+
+
+def _fmt_ts(value: Any) -> str:
+    """Epoch seconds -> UTC 'YYYY-MM-DD HH:MM:SSZ'; blank/odd values pass
+    through as-is (a dashboard must never 500 on stored data)."""
+    if value in (None, ""):
+        return ""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%SZ", time.gmtime(float(value)))
+    except (TypeError, ValueError, OSError, OverflowError):
+        return str(value)
+
+
+def _admin_html(snap: Dict[str, Any]) -> str:
+    """Server-rendered, dependency-free dashboard page.
+
+    Every interpolated value goes through html.escape (order rows carry
+    operator-controlled fields: refs, vendor ids, addresses). No script at
+    all, so the page is inert under the route CSP and cannot phone home.
+    Outbound ids render as plain text, not links: GET /orders/{id} hides
+    outbound rows from unauthenticated readers, so a bare-browser click on a
+    payment row would only ever land on a 404.
+    """
+    e = html.escape
+    chips = " ".join(
+        f'<span class="chip">{e(str(name))}: {count}</span>'
+        for name, count in sorted(snap["counts"].items())
+    ) or '<span class="chip">no orders yet</span>'
+    rows = []
+    for o in snap["orders"]:
+        oid = e(str(o.get("id") or ""))
+        if o.get("kind") == "in":
+            oid_cell = f'<a href="/orders/{oid}">{oid}</a>'
+        else:
+            oid_cell = oid
+        txid = str(o.get("txid") or "")
+        # Display shows a truncated txid; the full value rides the title
+        # attribute so an operator can still copy it out of the page.
+        txid_cell = (
+            f'<td title="{e(txid)}">{e(txid[:16] + ("…" if len(txid) > 16 else ""))}</td>'
+            if txid
+            else "<td></td>"
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{e(_fmt_ts(o.get('created_ts')))}</td>"
+            f"<td>{oid_cell}</td>"
+            f"<td>{e(str(o.get('kind') or ''))}</td>"
+            f"<td>{e(str(o.get('status') or ''))}</td>"
+            f'<td class="num">{e(str(o.get("usd_amount") or ""))}</td>'
+            f'<td class="num">{e(str(o.get("maza_amount") or ""))}</td>'
+            f"<td>{e(str(o.get('rate') or ''))}"
+            f' <small>({e(str(o.get("rate_source") or ""))})</small></td>'
+            f"{txid_cell}"
+            f"<td>{e(str(o.get('ref') or ''))}</td>"
+            f"<td>{e(str(o.get('vendor_id') or ''))}</td>"
+            "</tr>"
+        )
+    # Precompute before the template f-string: a `"""` delimiter cannot host
+    # `"..."/"..."` subscript quotes inside its expressions on Python 3.9-
+    # 3.11 (PEP 701 relaxed this only in 3.12), and the package supports 3.9+.
+    total = str(snap["total"])
+    f_kind = str(snap["filters"]["kind"])
+    f_status = str(snap["filters"]["status"])
+    shown = str(snap["shown"])
+    f_limit = str(snap["filters"]["limit"])
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MazaPay — orders</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 2rem; color: #1a1a1a; }}
+  h1 {{ font-size: 1.3rem; margin-bottom: 0.25rem; }}
+  p.meta {{ color: #555; margin-top: 0; }}
+  .chip {{ display: inline-block; border: 1px solid #bbb; border-radius: 12px;
+          padding: 0.1rem 0.6rem; margin-right: 0.4rem; font-size: 0.85rem; }}
+  table {{ border-collapse: collapse; margin-top: 1rem; width: 100%;
+          font-size: 0.85rem; }}
+  th, td {{ border: 1px solid #ccc; padding: 0.35rem 0.55rem;
+          text-align: left; overflow-wrap: anywhere; }}
+  th {{ background: #f2f2f2; }}
+  td.num {{ text-align: right; }}
+  footer {{ margin-top: 1.5rem; font-size: 0.85rem; color: #555; }}
+</style>
+</head>
+<body>
+<h1>MazaPay orders</h1>
+<p class="meta">{e(total)} order(s) match
+(kind: {e(f_kind)}, status: {e(f_status)}),
+showing {e(shown)} (newest first, page limit {e(f_limit)}).</p>
+<p>{chips}</p>
+<table>
+<tr><th>created (UTC)</th><th>order</th><th>kind</th><th>status</th>
+<th>USD</th><th>MAZA</th><th>locked rate</th><th>txid</th>
+<th>ref</th><th>vendor</th></tr>
+{''.join(rows)}
+</table>
+<footer>
+CSV for MIP Fund Accounting:
+<a href="/export/mip?kind=in">cash receipts (in)</a> ·
+<a href="/export/mip?kind=out">cash disbursements (out)</a>.
+The CSV links ask for the same login as this page.
+Filters: ?kind=in|out&amp;status=NAME&amp;limit=N&amp;format=json (JSON for scripts).
+</footer>
+</body>
+</html>
+"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -673,9 +835,23 @@ class Handler(BaseHTTPRequestHandler):
             # non-ASCII characters (TypeError -> dropped connection with no
             # HTTP response); bytes never raise, so hostile headers are a
             # plain 401.
-            return hmac.compare_digest(
+            if hmac.compare_digest(
                 header.encode("utf-8"), f"Bearer {config.API_TOKEN}".encode("utf-8")
-            )
+            ):
+                return True
+            # Basic auth (same token as the password, username ignored):
+            # browsers prompt for Basic natively, which is what makes the
+            # /admin dashboard usable by a non-CLI operator opening a URL —
+            # a browser cannot attach a Bearer header by itself. Same
+            # constant-time comparison, same credential, and the header is
+            # never logged (M-5 covers the whole Authorization header).
+            if header.startswith("Basic "):
+                decoded = base64.b64decode(header[6:], validate=True).decode("utf-8")
+                password = decoded.partition(":")[2]  # username ignored
+                return hmac.compare_digest(
+                    password.encode("utf-8"), config.API_TOKEN.encode("utf-8")
+                )
+            return False
         except Exception:
             return False
 
@@ -731,7 +907,18 @@ class Handler(BaseHTTPRequestHandler):
         if route is None:
             return self._json(404, {"error": f"no route {method} {path.path}"})
         if needs_auth and not self._authorized():
-            return self._json(401, {"error": "missing or invalid Authorization bearer token"})
+            # RFC 7235: a 401 SHOULD carry WWW-Authenticate. The Basic
+            # challenge is what makes a plain browser pop its login prompt
+            # on /admin (the non-CLI operator flow); Bearer stays first-class
+            # for scripts. Both name the same credential.
+            return self._json(
+                401,
+                {"error": "missing or invalid Authorization header (Bearer"
+                 " token, or Basic auth with the token as the password)"},
+                extra_headers={
+                    "WWW-Authenticate": 'Basic realm="mazapay-admin", Bearer'
+                },
+            )
         try:
             handler = getattr(self, f"_{route}")
             handler(*args)
@@ -930,6 +1117,27 @@ class Handler(BaseHTTPRequestHandler):
             self._json(200, mip_export.export_cash_disbursements(include_exported))
         else:
             raise ApiError(400, "kind must be 'in' or 'out'")
+
+    def _admin_get(self) -> None:
+        # Token-gated via _ROUTES (needs_auth=True). HTML page by default for
+        # non-CLI operators; ?format=json returns the same snapshot for
+        # scripts. Read-only: no chain calls, no store writes.
+        q = parse_qs(urlparse(self.path).query)
+        kind, status, limit, fmt = _admin_query(q)
+        snap = admin_snapshot(kind, status, limit)
+        if fmt == "json":
+            self._json(200, snap)
+            return
+        body = _admin_html(snap).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        # The page carries order data: a shared browser must never serve it
+        # from cache (same rule as the QR endpoint).
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
 
 class Server(ThreadingHTTPServer):

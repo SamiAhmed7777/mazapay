@@ -96,7 +96,16 @@ ORDER_RETRY_AFTER_SECONDS = _int("MAZAPAY_RETRY_AFTER_SECONDS", 60)
 DB_PATH = os.environ.get("MAZAPAY_DB", "/tmp/mazapay-dev.sqlite3")
 MIP_EXPORT_DIR = os.environ.get("MAZAPAY_MIP_EXPORT_DIR", "/tmp/mazapay-mip-out")
 
-# --- http server -----------------------------------------------------------
+# --- admin dashboard ---------------------------------------------------------
+# GET /admin (token-gated): read-only orders dashboard for non-CLI operators —
+# status summary, newest-first order table, links to order detail + the MIP
+# export sessions. The page size is bounded so a large store can never
+# produce an unbounded response; ?format=json serves scripts/agents with the
+# same payload shape.
+ADMIN_PAGE_LIMIT = _int("MAZAPAY_ADMIN_PAGE_LIMIT", 100)  # rows per page (default)
+ADMIN_MAX_LIMIT = _int("MAZAPAY_ADMIN_MAX_LIMIT", 500)  # hard ceiling on ?limit=
+
+# --- http server ------------------------------------------------------------
 LISTEN_HOST = os.environ.get("MAZAPAY_HOST", "127.0.0.1")
 LISTEN_PORT = _int("MAZAPAY_PORT", 8443)
 # Socket timeout for handler reads/writes (slowloris: a client dribbling a
