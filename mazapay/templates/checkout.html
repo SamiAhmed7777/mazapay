@@ -93,8 +93,13 @@ async function createOrder() {
     $('rate').textContent = body.rate.toFixed(6);
     $('src').textContent = body.rate_source;
     $('addr').textContent = body.address;
+    // QR is a convenience, not the payment path: reveal the box only when
+    // the SVG actually loads, and hide it on error — the address text and
+    // the Copy address button below are always the usable fallback.
+    $('qr').alt = 'QR code of the MAZA payment address beginning ' + body.address.slice(0, 6);
+    $('qr').onload = function () { $('qr-box').style.display = 'block'; };
+    $('qr').onerror = function () { $('qr-box').style.display = 'none'; };
     $('qr').src = '/orders/' + orderId + '/qr.svg';
-    $('qr-box').style.display = 'block';
     $('form-view').style.display = 'none';
     $('quote').style.display = 'block';
     timer = setInterval(tick, 500);

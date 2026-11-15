@@ -317,6 +317,43 @@ class TestQrEndpoint(unittest.TestCase):
         status, _, svg = self._req("GET", f"/orders/{pay['id']}/qr.svg")
         self.assertEqual(status, 200)
 
+    def test_checkout_page_qr_degrade_and_prefix_alt(self):
+        """QR polish follow-ups (ed652fc verdict): the checkout page must not
+        show a broken QR image — the box is revealed only when the SVG loads
+        and hidden on error (address text + Copy address button below remain
+        the always-usable fallback), and the img alt names the address prefix
+        for screen readers. Handlers are attached as JS properties from the
+        page's existing inline script, so no new inline-attribute CSP surface
+        is introduced. Honest limit: no JS engine in this environment — these
+        assertions pin the delivered bytes, they are not a browser run."""
+        status, _, body = self._req("GET", "/")
+        self.assertEqual(status, 200)
+        page = body.decode("utf-8")
+        # onload/onerror are attached BEFORE the src assignment
+        self.assertLess(
+            page.index("$('qr').onload"),
+            page.index("$('qr').src ="),
+            "onload/onerror must be attached before the QR src is set",
+        )
+        self.assertIn("$('qr').onerror", page)
+        self.assertIn("function () { $('qr-box').style.display = 'block'; }", page)
+        self.assertIn("function () { $('qr-box').style.display = 'none'; }", page)
+        # the box is no longer force-shown next to the src assignment —
+        # reveal comes only from a successful load
+        self.assertNotIn(
+            "$('qr').src = '/orders/' + orderId + '/qr.svg';\n"
+            "    $('qr-box').style.display = 'block';",
+            page,
+        )
+        # static markup starts hidden
+        self.assertIn('id="qr-box" style="display:none', page)
+        # alt names the address prefix from the live order body
+        self.assertIn(
+            "$('qr').alt = 'QR code of the MAZA payment address beginning '"
+            " + body.address.slice(0, 6);",
+            page,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
