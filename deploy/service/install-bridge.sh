@@ -44,6 +44,15 @@ LISTEN_PORT="18500"
 CADDY_DOMAIN="mazapay.sami-ahmed.net"
 HOST_PUB_IP="194.163.161.162"   # samihost public v4 — the DNS gate's expected A record
 LEGACY_PORT="18443"
+# caddy-guard state files (Samihost reconciler): SamiPanel's Caddyfile generator
+# rewrites the WHOLE file on panel events and the guard restores ONLY blocks
+# registered in these files — an unregistered block is silently dropped on the
+# next regen (found live 2026-11-15: the deployed mazapay vhost vanished hours
+# after install, external TLS died with "tlsv1 alert internal error"). The
+# guard rebuilds its merged file from a static array + the .pre-guard file on
+# every event pass, so .pre-guard is the durable registration; both are written.
+GUARD_BLOCKS="/var/lib/caddy-guard/protected-blocks.txt"
+GUARD_PREGUARD="${GUARD_BLOCKS}.pre-guard"
 PROC_DIR="/proc"
 LOCK_DIR="/run/lock"
 
@@ -53,6 +62,8 @@ if [ -n "${SANDBOX_ROOT:-}" ]; then
     ENV_DST="${SANDBOX_ENV_DST:?SANDBOX_ENV_DST required}"
     CADDYFILE="${SANDBOX_CADDYFILE:?SANDBOX_CADDYFILE required}"
     RPC_CONF="${SANDBOX_RPC_CONF:?SANDBOX_RPC_CONF required}"
+    GUARD_BLOCKS="${SANDBOX_GUARD_BLOCKS:-}"
+    GUARD_PREGUARD="${SANDBOX_GUARD_PREGUARD:-}"
     LOCK_DIR="${SANDBOX_ROOT}/lock"
     PROC_DIR="${SANDBOX_PROC_DIR:?SANDBOX_PROC_DIR required}"
     LEGACY_PORT="${SANDBOX_LEGACY_PORT:-18999}"
@@ -468,6 +479,57 @@ SYMLINK_CHANGED=1
 log "current -> $REL_DIR"
 
 # caddy managed block
+# Guard registration: the vhost block must ALSO exist in the caddy-guard state
+# files (byte-exact bare block, no marker comments — the guard re-appends its
+# canonical copy verbatim). Written BEFORE the Caddyfile changes: the guard
+# reacts to Caddyfile events, and its .pre-guard file is the durable
+# registration source. Runs only after the candidate validates, so an abort
+# here leaves no registration debris for a block that was never installed.
+register_guard_block() {
+    [ -n "$GUARD_PREGUARD" ] || return 0
+    if [ ! -d "$(dirname "$GUARD_PREGUARD")" ]; then
+        log "caddy-guard not present on this host — skipping block registration"
+        return 0
+    fi
+    python3 - "$GUARD_PREGUARD" "$GUARD_BLOCKS" "$CADDY_DOMAIN" "${LISTEN_HOST}:${LISTEN_PORT}" <<'PYGUARD' || fail 2 "caddy-guard registration failed — a panel Caddyfile regen would drop the vhost (guard copies kept; rerun the installer after fixing)"
+import os, sys
+preguard, merged, label, upstream = sys.argv[1:5]
+block = (
+    "%s {\n"
+    "\t@healthcheck path /health\n"
+    "\trespond @healthcheck 403\n"
+    "\t@adminsurface path /vendors /vendors/* /payments /payments/* /watch /watch/* /export /export/*\n"
+    "\trespond @adminsurface 404\n"
+    "\trequest_body {\n"
+    "\t\tmax_size 1MB\n"
+    "\t}\n"
+    "\tencode gzip\n"
+    "\treverse_proxy %s\n"
+    "}" % (label, upstream)
+)
+def ensure(path):
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    txt = ""
+    if os.path.exists(path):
+        with open(path) as f:
+            txt = f.read()
+    # guard merge semantics: chunks split on blank lines, label = first token
+    # of the first line; replacing any same-label chunk keeps reruns idempotent
+    # and refreshes stale copies after a port/domain change.
+    chunks = [c.strip() for c in txt.split("\n\n") if c.strip()]
+    keep = [c for c in chunks if c.splitlines()[0].split()[0] != label]
+    keep.append(block)
+    with open(path, "w") as f:
+        f.write("\n\n".join(keep) + "\n")
+ensure(preguard)
+if merged:
+    ensure(merged)
+print("caddy-guard: block registered (label=%s)" % label)
+PYGUARD
+    log "caddy-guard: vhost registered in guard state files"
+}
 CANDIDATE="${SCRATCH}/Caddyfile.candidate"
 cp "$CADDYFILE" "$CANDIDATE" || fail 2 "caddyfile copy failed"
 if [ "$CADDY_BLOCK_OWNER" = "ours" ]; then
@@ -501,6 +563,7 @@ EOF
 if ! caddy validate --adapter caddyfile --config "$CANDIDATE" >/dev/null 2>&1; then
     fail 2 "candidate Caddyfile failed validation — live file untouched"
 fi
+register_guard_block
 cp "$CADDYFILE" "${CADDYFILE}${CADDY_BACKUP_SUFFIX}" || fail 2 "caddy backup failed"
 cp "$CANDIDATE" "$CADDYFILE" || fail 2 "caddy install failed"
 CADDY_CHANGED=1

@@ -50,6 +50,12 @@ new_sbx() { # $1 = scenario name
     # fixture caddyfile
     printf 'import /etc/caddy/snippets.d/*.caddy\n\nsbxsites.example {\n\treverse_proxy 127.0.0.1:7000\n}\n' \
         > "$sbx/etc/caddy/Caddyfile"
+    # fixture caddy-guard state files (S11 exercises registration; other
+    # scenarios carry the paths so the registration code path is uniform)
+    mkdir -p "$sbx/var/lib/caddy-guard"
+    printf 'sbxsites.example {\n\treverse_proxy 127.0.0.1:7000\n}\n' \
+        > "$sbx/var/lib/caddy-guard/protected-blocks.txt"
+    printf '' > "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard"
     # shims
     cat > "$sbx/shims/sleep" <<'EOF'
 #!/bin/sh
@@ -130,6 +136,8 @@ run_install() { # $1 = sbx ; remaining args: extra VAR=val exported to the insta
         export SANDBOX_UNIT_DST="$sbx/etc/systemd/system/mazapay.service"
         export SANDBOX_ENV_DST="$sbx/etc/mazapay.env"
         export SANDBOX_CADDYFILE="$sbx/etc/caddy/Caddyfile"
+        export SANDBOX_GUARD_BLOCKS="$sbx/var/lib/caddy-guard/protected-blocks.txt"
+        export SANDBOX_GUARD_PREGUARD="$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard"
         export SANDBOX_RPC_CONF="$sbx/rpc.conf"
         export SANDBOX_PROC_DIR="$sbx/proc"
         export SANDBOX_TREE_SRC="$sbx/tree"
@@ -295,6 +303,7 @@ ck "caddyfile untouched" file_eq "$sbx/etc/caddy/Caddyfile" "$sbx/etc/caddy/Cadd
 ck "no caddy backup created" [ ! -e "$sbx/etc/caddy/Caddyfile.pre-mazapay" ]
 ck "fresh-install unit removed" [ ! -e "$sbx/etc/systemd/system/mazapay.service" ]
 ck "staged release discarded" [ -z "$(ls -A "$sbx/opt/releases" 2>/dev/null)" ]
+ck "no guard registration debris on abort" not_has "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" "reverse_proxy"
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
 echo "== S9: foreign process holds the listen port (loopback) -> abort 3"
@@ -322,6 +331,31 @@ rc="$(run_install "$sbx")"
 ck "exit code is 3" rc_is "$rc" 3
 ck "existing env untouched" file_has "$sbx/etc/mazapay.env" "MAZAPAY_API_TOKEN=keepme"
 ck "no releases staged" [ -z "$(ls -A "$sbx/opt/releases" 2>/dev/null)" ]
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S11: caddy-guard registration — block lands in BOTH state files, rerun idempotent"
+sbx="$(new_sbx s11)"
+rc="$(run_install "$sbx")"
+ck "exit 0" rc_is "$rc" 0
+ck "preguard carries the upstream line" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" "reverse_proxy 127.0.0.1:18500"
+ck "merged carries the upstream line" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt" "reverse_proxy 127.0.0.1:18500"
+ck "preguard label is the sandbox domain" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" "sandbox.mazapay.invalid {"
+ck "registered BEFORE caddy swap (log order)" [ "$(grep -n 'vhost registered in guard state files' "$sbx/logs/run.log" | cut -d: -f1)" -lt "$(grep -n 'caddy: block installed' "$sbx/logs/run.log" | cut -d: -f1)" ]
+rc2="$(run_install "$sbx")"
+ck "rerun exit 0" rc_is "$rc2" 0
+ck "preguard has exactly ONE block after rerun" [ "$(grep -c 'reverse_proxy 127.0.0.1:18500' "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard")" = "1" ]
+ck "merged has exactly ONE block after rerun" [ "$(grep -c 'reverse_proxy 127.0.0.1:18500' "$sbx/var/lib/caddy-guard/protected-blocks.txt")" = "1" ]
+leak_check "$sbx"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S11b: no caddy-guard on host (dir absent) -> graceful skip, deploy proceeds"
+sbx="$(new_sbx s11b)"
+rm -rf "$sbx/var/lib/caddy-guard"
+rc="$(run_install "$sbx")"
+ck "exit 0 without guard" rc_is "$rc" 0
+ck "skip line logged" file_has "$sbx/logs/run.log" "caddy-guard not present on this host"
+ck "vhost block still installed" file_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge managed block"
+leak_check "$sbx"
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
 echo
