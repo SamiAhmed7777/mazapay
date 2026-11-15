@@ -74,6 +74,18 @@ ALERT_WEBHOOK_TOKEN = os.environ.get("MAZAPAY_ALERT_WEBHOOK_TOKEN", "")
 ALERT_WEBHOOK_TIMEOUT = _int("MAZAPAY_ALERT_WEBHOOK_TIMEOUT", 5)
 ALERT_DEPOSIT_MINCONF = _int("MAZAPAY_ALERT_DEPOSIT_MINCONF", 1)
 
+# --- abuse caps on the public surface --------------------------------------
+# Public order intake (POST /orders is unauthenticated) is capped at three
+# layers: a per-order USD ceiling, a cap on simultaneously-awaiting orders per
+# client IP, and a global awaiting cap (client IP = X-Forwarded-For's first
+# hop when behind the loopback-bound proxy, else the peer address). All three
+# answer 429/400 per route; none apply to tokened admin routes.
+MAX_ORDER_USD = _float("MAZAPAY_MAX_ORDER_USD", 10000.0)  # ~$10k per order
+MAX_DISBURSE_USD = _float("MAZAPAY_MAX_DISBURSE_USD", 10000.0)  # per /payments
+MAX_AWAITING_ORDERS_PER_IP = _int("MAZAPAY_MAX_AWAITING_PER_IP", 20)
+MAX_AWAITING_ORDERS_GLOBAL = _int("MAZAPAY_MAX_AWAITING_GLOBAL", 200)
+ORDER_RETRY_AFTER_SECONDS = _int("MAZAPAY_RETRY_AFTER_SECONDS", 60)
+
 # --- storage / export ------------------------------------------------------
 DB_PATH = os.environ.get("MAZAPAY_DB", "/tmp/mazapay-dev.sqlite3")
 MIP_EXPORT_DIR = os.environ.get("MAZAPAY_MIP_EXPORT_DIR", "/tmp/mazapay-mip-out")
@@ -81,6 +93,14 @@ MIP_EXPORT_DIR = os.environ.get("MAZAPAY_MIP_EXPORT_DIR", "/tmp/mazapay-mip-out"
 # --- http server -----------------------------------------------------------
 LISTEN_HOST = os.environ.get("MAZAPAY_HOST", "127.0.0.1")
 LISTEN_PORT = _int("MAZAPAY_PORT", 8443)
+# Socket timeout for handler reads/writes (slowloris: a client dribbling a
+# request body can no longer hold a thread forever; a timed-out read answers
+# 408 and closes). Honored by socketserver via Handler.timeout.
+HANDLER_TIMEOUT_SECONDS = _int("MAZAPAY_HANDLER_TIMEOUT_SECONDS", 30)
+# Bounded concurrent connections: handlers beyond this many simultaneously
+# ACTIVE connections are shed with 503 + Retry-After instead of growing the
+# thread count unbounded (ThreadingHTTPServer spawns one thread per connect).
+MAX_CONCURRENT_CONNECTIONS = _int("MAZAPAY_MAX_CONCURRENT_CONNECTIONS", 64)
 # Export crash recovery: a claimed-but-unwritten export session is adopted
 # by a later run only after its lease is older than this many seconds — a
 # live exporter's fresh lease is never stolen by a concurrent run.

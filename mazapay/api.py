@@ -44,6 +44,7 @@ Endpoints:
 """
 import hmac
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -60,12 +61,36 @@ from .mazad import ChainError, get_chain, is_mock
 
 _TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "checkout.html")
 
+_ACCESS_LOG = logging.getLogger("mazapay.access")
+_ERROR_LOG = logging.getLogger("mazapay.errors")
+# Library-safe default: unconfigured processes (tests, library use) stay
+# silent instead of leaking log lines to stderr via logging.lastResort;
+# main() swaps in the real stream handler for journald capture.
+_ACCESS_LOG.addHandler(logging.NullHandler())
+
+# M-4: conservative CSP for the checkout page. The inline <script> and
+# onclick= handlers in checkout.html require 'unsafe-inline' until the page's
+# JS is externalized; frame-ancestors 'none' + X-Frame-Options DENY carry the
+# clickjacking protection meanwhile. HSTS belongs at the TLS front (Caddy).
+_CONTENT_SECURITY_POLICY = (
+    "default-src 'none'; script-src 'self' 'unsafe-inline'; "
+    "style-src 'unsafe-inline'; connect-src 'self'; img-src 'self'; "
+    "base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+)
+
+# H-1 intake: readable reference codes only — anything else (formula
+# payloads, control characters, overlong strings) is refused at the door
+# instead of neutralized later in the MIP export. fullmatch() so a trailing
+# newline cannot sneak past the anchor.
+_REF_RE = re.compile(r"[\w .:@/-]{0,120}")
+
 
 class ApiError(Exception):
-    def __init__(self, status: int, message: str):
+    def __init__(self, status: int, message: str, headers: Optional[Dict[str, str]] = None):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.headers = dict(headers or {})
 
 
 _MAX_USD_AMOUNT = Decimal("1000000000000")  # $1T sanity ceiling
@@ -146,9 +171,23 @@ def _address_from(payload: Dict[str, Any]) -> Tuple[str, str]:
     return address, vendor_id
 
 
-def create_order(usd_amount, ref: str = "", vendor_id: str = "") -> Dict[str, Any]:
-    """Quote + open an inbound order with a locked rate and a fresh address."""
+def create_order(
+    usd_amount,
+    ref: str = "",
+    vendor_id: str = "",
+    client_ip: str = "",
+) -> Dict[str, Any]:
+    """Quote + open an inbound order with a locked rate and a fresh address.
+
+    Carries the H-2 per-order ceiling; the awaiting-order caps (per-IP and
+    global) are checked by the HTTP intake in _orders_post.
+    """
     usd = _usd_amount(usd_amount)
+    if usd > config.MAX_ORDER_USD:
+        raise ApiError(
+            400,
+            f"usd_amount exceeds the per-order maximum of {config.MAX_ORDER_USD:g} USD",
+        )
     if vendor_id and not store.get_vendor(vendor_id):
         raise ApiError(404, f"vendor {vendor_id} not found")
     maza_amount, rate, source = _quote_or_503(usd)
@@ -166,6 +205,7 @@ def create_order(usd_amount, ref: str = "", vendor_id: str = "") -> Dict[str, An
         vendor_id=vendor_id,
         ref=ref,
         address=address,
+        client_ip=client_ip,
     )
     order["status"] = "awaiting"  # quoted -> awaiting funds
     store.update_order(order["id"], {"status": "awaiting"}, "awaiting_funds")
@@ -235,8 +275,18 @@ def _broadcast_out(
 
 
 def disburse(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Send MAZA to a validated address; intent recorded before broadcast."""
+    """Send MAZA to a validated address; intent recorded before broadcast.
+
+    Carries the M-6 disbursement ceiling: a leaked token must not be able to
+    drain the wallet in one oversized call (checked BEFORE the intent row is
+    written, so a refused call leaves nothing behind).
+    """
     usd = _usd_amount(payload.get("usd_amount"))
+    if usd > config.MAX_DISBURSE_USD:
+        raise ApiError(
+            400,
+            f"usd_amount exceeds the disbursement ceiling of {config.MAX_DISBURSE_USD:g} USD",
+        )
     address, vendor_id = _address_from(payload)
     return _broadcast_out(usd, address, vendor_id, _str_field(payload.get("ref", ""), "ref"))
 
@@ -480,18 +530,136 @@ _ROUTES = [
 ]
 
 
+def _check_intake_caps(client_ip: str) -> None:
+    """H-2 application caps on PUBLIC order creation.
+
+    The awaiting-order slots (per client IP and globally) are finite: an
+    anonymous flood can no longer grow the wallet keypool, the watcher scan
+    set, and the store without bound. 429 + Retry-After, matching the
+    documented failure shape.
+    """
+    if store.count_awaiting() >= config.MAX_AWAITING_ORDERS_GLOBAL:
+        raise ApiError(
+            429,
+            "too many open orders; retry later",
+            headers={"Retry-After": str(config.ORDER_RETRY_AFTER_SECONDS)},
+        )
+    if store.count_awaiting(client_ip=client_ip) >= config.MAX_AWAITING_ORDERS_PER_IP:
+        raise ApiError(
+            429,
+            "too many open orders from your address; retry later",
+            headers={"Retry-After": str(config.ORDER_RETRY_AFTER_SECONDS)},
+        )
+
+
 class Handler(BaseHTTPRequestHandler):
-    server_version = "MazaPay/0.3.1"
+    # No version, no interpreter banner (M-4): "MazaPay" only — the old
+    # "MazaPay/0.3.1 Python/3.x" Server header aided targeted scanning.
+    server_version = "MazaPay"
+
+    def version_string(self) -> str:
+        # BaseHTTPRequestHandler appends sys_version ("Python/x.y.z") by
+        # default — drop the interpreter banner too.
+        return self.server_version
+    # H-3: socket timeout on every handler read/write (slowloris body
+    # dribbles can no longer hold a thread forever). A timed-out body read
+    # answers 408 (see _body); the stdlib closes hung request-line reads.
+    timeout = config.HANDLER_TIMEOUT_SECONDS
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A002  (stdlib name)
         pass
 
+    # -- connection lifecycle (bounded concurrency, H-3) ----------------------
+    def setup(self) -> None:
+        self._connection_slot: Optional[threading.BoundedSemaphore] = None
+        self._shed = False
+        slots = getattr(self.server, "connection_slots", None)
+        if slots is not None:
+            if slots.acquire(blocking=False):
+                self._connection_slot = slots
+            else:
+                # Over the concurrent-connection bound: shed load instead of
+                # growing the thread count unbounded.
+                self._shed = True
+        super().setup()
+        if self._shed:
+            # request parsing never happened (setup precedes
+            # handle_one_request), so the stdlib logging machinery's
+            # attributes do not exist yet and request_version is still
+            # HTTP/0.9 (which would suppress the whole status line). Set
+            # what send_response touches before shedding.
+            self.request_version = "HTTP/1.0"
+            self.requestline = ""
+            self.close_connection = True
+            try:
+                body = b'{"error": "server busy; retry later"}'
+                self.send_response(503)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Retry-After", str(config.ORDER_RETRY_AFTER_SECONDS))
+                self._security_headers()  # uniform with every other response
+                self.send_header("Connection", "close")
+                self.end_headers()
+                self.wfile.write(body)
+            except OSError:
+                pass
+            # _client_ip() cannot see X-Forwarded-For here (headers are
+            # parsed after setup), so the shed line records the peer
+            # address — the proxy hop, not the end client.
+            _ACCESS_LOG.warning(
+                '%s "CONNECT shed" 503 (connection limit reached)',
+                self._client_ip(),
+            )
+
+    def handle(self) -> None:
+        # A connection shed in setup() never got a slot: its 503 is already
+        # written, there is nothing to serve.
+        if self._shed:
+            return
+        super().handle()
+
+    def finish(self) -> None:
+        try:
+            super().finish()
+        finally:
+            if self._connection_slot is not None:
+                self._connection_slot.release()
+                self._connection_slot = None
+
     # -- helpers --------------------------------------------------------------
-    def _json(self, status: int, payload: Any) -> None:
+    def _client_ip(self) -> str:
+        """Client IP for caps + access logs: X-Forwarded-For's first hop when
+        present (trusted only because the listener binds loopback behind the
+        proxy), else the peer address. headers may not exist yet during
+        setup() — getattr guards that."""
+        headers = getattr(self, "headers", None)
+        xff = headers.get("X-Forwarded-For", "") if headers else ""
+        if xff:
+            return xff.split(",")[0].strip()
+        try:
+            return self.client_address[0]
+        except Exception:  # pragma: no cover - peer vanished before logging
+            return "-"
+
+    def _security_headers(self) -> None:
+        """M-4: emitted on EVERY response (HTML + JSON)."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", _CONTENT_SECURITY_POLICY)
+
+    def send_response(self, code: int, message: Optional[str] = None) -> None:
+        self._response_status = code  # captured for the access log line
+        super().send_response(code, message)
+
+    def _json(self, status: int, payload: Any, extra_headers: Optional[Dict[str, str]] = None) -> None:
         body = json.dumps(payload, indent=2, default=str).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        for key, value in (extra_headers or {}).items():
+            self.send_header(key, value)
+        self._security_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -499,21 +667,52 @@ class Handler(BaseHTTPRequestHandler):
         if not config.API_TOKEN:
             return True  # open mode (mock/demo only; real mode refuses to serve)
         header = self.headers.get("Authorization", "")
-        return hmac.compare_digest(header, f"Bearer {config.API_TOKEN}")
+        try:
+            # Compare ENCODED BYTES: compare_digest rejects str inputs with
+            # non-ASCII characters (TypeError -> dropped connection with no
+            # HTTP response); bytes never raise, so hostile headers are a
+            # plain 401.
+            return hmac.compare_digest(
+                header.encode("utf-8"), f"Bearer {config.API_TOKEN}".encode("utf-8")
+            )
+        except Exception:
+            return False
 
     def _body(self) -> Dict[str, Any]:
-        length = int(self.headers.get("Content-Length") or 0)
-        if not length:
+        raw_length = self.headers.get("Content-Length")
+        if raw_length is None or raw_length == "":
+            return {}
+        try:
+            length = int(raw_length)
+        except (TypeError, ValueError):
+            self.close_connection = True
+            raise ApiError(400, "invalid Content-Length") from None
+        if length <= 0:
+            # 0 = empty body; a negative value would make rfile.read() read
+            # until EOF — refuse before touching the socket.
             return {}
         if length > _MAX_BODY_BYTES:
             # refuse before buffering: a multi-GB declared body would
             # otherwise be read fully before the JSON parse rejects it
+            self.close_connection = True
             raise ApiError(413, "request body too large")
         try:
-            data = json.loads(self.rfile.read(length).decode("utf-8"))
+            data = self.rfile.read(length)
+        except TimeoutError:
+            # H-3: the socket timeout tripped mid-body — a controlled 408
+            # instead of a thread wedged forever on a dribbling client.
+            self.close_connection = True
+            raise ApiError(408, "request body read timed out") from None
+        except OSError:
+            self.close_connection = True
+            raise ApiError(400, "request body read failed") from None
+        try:
+            data = json.loads(data.decode("utf-8"))
         except (ValueError, UnicodeDecodeError, RecursionError):
+            self.close_connection = True
             raise ApiError(400, "invalid JSON body") from None
         if not isinstance(data, dict):
+            self.close_connection = True
             raise ApiError(400, "JSON object body required")
         return data
 
@@ -536,15 +735,53 @@ class Handler(BaseHTTPRequestHandler):
             handler = getattr(self, f"_{route}")
             handler(*args)
         except ApiError as exc:
-            self._json(exc.status, {"error": exc.message})
-        except Exception as exc:  # noqa: BLE001
-            self._json(500, {"error": f"internal: {exc}"})
+            self._json_quiet(exc.status, {"error": exc.message}, exc.headers)
+        except (BrokenPipeError, ConnectionResetError):
+            # client vanished mid-response — routine (aborted page loads),
+            # never an error condition and never a 500
+            self.close_connection = True
+        except Exception:  # noqa: BLE001
+            # M-1 hygiene: the exception repr used to be returned to the
+            # client (`internal: <repr>`) — log it server-side, return a
+            # fixed message.
+            _ERROR_LOG.exception("unhandled error serving %s %s", method, self.path)
+            self._json_quiet(500, {"error": "internal server error"})
+
+    def _json_quiet(self, status: int, payload: Any, headers: Optional[Dict[str, str]] = None) -> None:
+        """Respond, but treat a client-side disconnect as routine."""
+        try:
+            self._json(status, payload, headers)
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True
 
     def do_GET(self) -> None:  # noqa: N802
-        self._route("GET")
+        self._dispatch("GET")
 
     def do_POST(self) -> None:  # noqa: N802
-        self._route("POST")
+        self._dispatch("POST")
+
+    def _dispatch(self, method: str) -> None:
+        """Route with timing, then write the M-5 access-log line.
+
+        One line per request: client ip, method, path, status, duration.
+        Never the Authorization header, never bodies — the token must not
+        appear in any log. Auth/limit failures log at WARNING.
+        """
+        start = time.perf_counter()
+        try:
+            self._route(method)
+        finally:
+            status = getattr(self, "_response_status", 0)
+            level = logging.WARNING if status in (400, 401, 403, 408, 413, 429, 503) else logging.INFO
+            _ACCESS_LOG.log(
+                level,
+                '%s "%s %s" %s %.3fs',
+                self._client_ip(),
+                method,
+                self.path,
+                status,
+                time.perf_counter() - start,
+            )
 
     # -- handlers -------------------------------------------------------------
     def _index(self) -> None:
@@ -556,6 +793,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self._security_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -599,12 +837,26 @@ class Handler(BaseHTTPRequestHandler):
 
     def _orders_post(self) -> None:
         body = self._body()
+        ref = _str_field(body.get("ref", ""), "ref")
+        # H-1 intake: the ref is unauthenticated input that lands in MIP
+        # export cells (PAYOR/VENDOR/DESCRIPTION). Readable reference codes
+        # only — formula payloads never reach the store at all (the export
+        # side additionally neutralizes cells, defense in depth).
+        if not _REF_RE.fullmatch(ref):
+            raise ApiError(
+                400,
+                "ref must be at most 120 characters of letters, digits,"
+                " space, or . : @ / - _",
+            )
+        client_ip = self._client_ip()
+        _check_intake_caps(client_ip)
         self._json(
             201,
             create_order(
                 body.get("usd_amount"),
-                _str_field(body.get("ref", ""), "ref"),
+                ref,
                 _str_field(body.get("vendor_id", ""), "vendor_id"),
+                client_ip=client_ip,
             ),
         )
 
@@ -662,6 +914,13 @@ class Handler(BaseHTTPRequestHandler):
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
+    def __init__(self, *args: Any, **kwargs: Any):
+        super().__init__(*args, **kwargs)
+        # H-3: bound simultaneously ACTIVE handler connections (one thread
+        # spawns per connection otherwise). Handler.setup sheds the overflow
+        # with 503 + Retry-After; slots release in finish().
+        self.connection_slots = threading.BoundedSemaphore(config.MAX_CONCURRENT_CONNECTIONS)
+
 
 def require_safe_mode() -> None:
     """Fail closed on dangerous real-mode configurations.
@@ -694,6 +953,16 @@ def serve(host: Optional[str] = None, port: Optional[int] = None, with_watcher: 
     store.init_db()
     require_safe_mode()
     srv = Server((host or config.LISTEN_HOST, port or config.LISTEN_PORT), Handler)
+    bind = host or config.LISTEN_HOST
+    if bind not in ("127.0.0.1", "::1", "localhost"):
+        # The per-IP order cap and access logs trust X-Forwarded-For
+        # because the listener is loopback-bound behind the TLS proxy;
+        # on any other bind that cap key becomes client-controlled.
+        _ERROR_LOG.warning(
+            "listening on %s (not loopback): the X-Forwarded-For-based"
+            " per-IP cap key is client-controlled on a non-loopback bind;"
+            " bind 127.0.0.1 behind the proxy", bind
+        )
     if with_watcher:
         _WATCHER = watcher.Watcher()
         _WATCHER.start()
@@ -706,6 +975,16 @@ def shutdown_watcher() -> None:
 
 
 def main() -> None:  # pragma: no cover - manual run helper
+    # M-5: the access log is only useful if something consumes it — journald
+    # captures stderr for the systemd unit. Tests use assertLogs instead.
+    # (An embedder that configured a real handler keeps theirs.)
+    if all(isinstance(h, logging.NullHandler) for h in _ACCESS_LOG.handlers):
+        _handler = logging.StreamHandler()
+        _handler.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
+        )
+        _ACCESS_LOG.addHandler(_handler)
+        _ACCESS_LOG.setLevel(logging.INFO)
     store.init_db()
     srv = serve()
     print(f"mazapay-bridge listening on http://{srv.server_address[0]}:{srv.server_address[1]}")

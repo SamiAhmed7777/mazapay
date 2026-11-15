@@ -224,8 +224,18 @@ are the ones with retry semantics).
   concurrent run, so recovery is safe rather than instant.
 - **Public collect routes**: `POST /orders` / `GET /orders/{id}` and the
   checkout page are unauthenticated (they only create watch addresses and
-  lock quotes — nothing spends). Rate limiting on order creation is future
-  work; until then, deploy behind a reverse proxy with basic throttling.
+  lock quotes — nothing spends). Application-level caps now bound the
+  abuse surface: a per-order USD ceiling (`MAZAPAY_MAX_ORDER_USD`,
+  default $10k), awaiting-order caps per client IP and globally
+  (`MAZAPAY_MAX_AWAITING_PER_IP`, `MAZAPAY_MAX_AWAITING_GLOBAL` — both
+  answered with `429` + `Retry-After`), a request-body cap with a read
+  timeout, and a bounded concurrent-connection limit. A reverse-proxy
+  per-IP rate limit (Caddy `rate_limit` module or fail2ban on proxy logs)
+  remains the recommended outer layer, and a pre-generated **address
+  pool** (serve orders from a bounded pool of pre-made addresses instead
+  of one `getnewaddress` per order) is a deploy option if wallet-key
+  growth under abuse ever becomes a concern — deliberately not built
+  into the service.
 - **Single-process**: the SQLite store is safe for one service process; a
   multi-instance deployment needs a real DB layer first.
 - MockChain exists so the whole flow is testable without a synced node —

@@ -28,6 +28,14 @@ from typing import Any, Dict, Optional
 from . import config, notifier, store
 from .mazad import ChainError, get_chain
 
+# Single-flight poll guard (M-2): the background Watcher thread and any
+# tokened POST /watch can otherwise run concurrent passes, and the deposit
+# alert is check-then-act across a network dispatch — two interleaving passes
+# would both dispatch. One process, one poll at a time; a pass arriving while
+# another holds the lock returns immediately with already_running=1 instead
+# of stacking blocked threads.
+_POLL_LOCK = threading.Lock()
+
 
 def find_txid(chain: Any, address: str, min_amount: float) -> Optional[str]:
     """Scan recent transactions for a receive to `address` >= min_amount.
@@ -160,7 +168,6 @@ def _watch_inbound(
         txid = find_txid(chain, address, maza)
         status = "late_paid" if late else "paid"
         fields = {
-            "status": status,
             "paid_ts": time.time(),
             "confirmations": config.CONFIRMATIONS_REQUIRED,
             "txid": txid,
@@ -171,11 +178,19 @@ def _watch_inbound(
             # disabled no marker is written, so the audit entry stays
             # identical to the pre-alerting behaviour.
             fields["confirm_alerted_ts"] = time.time()
-        store.update_order(
+        # CAS flip (M-2): only the pass that wins awaiting/expired -> paid /
+        # late_paid counts and dispatches; a loser (the row was flipped
+        # between our snapshot and the write) skips the dispatch entirely,
+        # so `deposit_confirmed` can never fire twice for one order.
+        won = store.transition(
             order["id"],
-            fields,
-            "late_receipt_detected" if late else "receipt_confirmed",
+            order["status"],
+            status,
+            fields=fields,
+            event="late_receipt_detected" if late else "receipt_confirmed",
         )
+        if not won:
+            return
         counts["late_paid" if late else "paid"] += 1
         if _dispatch(_alert_payload(order, "deposit_confirmed", received, txid, status)):
             counts["confirm_alerts"] += 1
@@ -183,29 +198,43 @@ def _watch_inbound(
         counts["still_pending"] += 1
 
 
-def poll_once() -> Dict[str, int]:
-    """One watcher pass.
-
-    Returns counts: {paid, late_paid, expired, still_pending,
-    deposit_alerts, confirm_alerts} — the last two count alerts actually
-    delivered by this pass (a retried deposit alert counts again: it had
-    not been delivered before).
-    """
-    chain, _mode = get_chain()
-    store.mark_expired_stale()
-    counts = {
+def _counts_template() -> Dict[str, int]:
+    """Zeroed per-pass counter dict (also the skip shape for single-flight)."""
+    return {
         "paid": 0,
         "late_paid": 0,
         "expired": 0,
         "still_pending": 0,
         "deposit_alerts": 0,
         "confirm_alerts": 0,
+        "already_running": 0,
     }
-    for order in store.pending_inbound():
-        _watch_inbound(chain, order, counts, late=False)
-    # Late payments on expired orders: reconcile, never drop.
-    for order in store.expired_inbound():
-        _watch_inbound(chain, order, counts, late=True)
+
+
+def poll_once() -> Dict[str, int]:
+    """One watcher pass (single-flight: one pass runs at a time).
+
+    Returns counts: {paid, late_paid, expired, still_pending,
+    deposit_alerts, confirm_alerts, already_running} — the alert counts
+    count alerts actually delivered by this pass (a retried deposit alert
+    counts again: it had not been delivered before). A pass that starts
+    while another is in flight skips immediately and reports
+    already_running=1 without touching the chain.
+    """
+    counts = _counts_template()
+    if not _POLL_LOCK.acquire(blocking=False):
+        counts["already_running"] = 1
+        return counts
+    try:
+        chain, _mode = get_chain()
+        store.mark_expired_stale()
+        for order in store.pending_inbound():
+            _watch_inbound(chain, order, counts, late=False)
+        # Late payments on expired orders: reconcile, never drop.
+        for order in store.expired_inbound():
+            _watch_inbound(chain, order, counts, late=True)
+    finally:
+        _POLL_LOCK.release()
     return counts
 
 

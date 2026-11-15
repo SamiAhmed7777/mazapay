@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS orders (
     export_id TEXT,
     export_state TEXT,               -- NULL | 'claimed' | 'written'
     export_lease_ts REAL,            -- claim time; stale claims are adoptable
-    parent_order_id TEXT             -- links a refund payment to its late order
+    parent_order_id TEXT,            -- links a refund payment to its late order
+    client_ip TEXT                   -- intake client IP on public orders (per-IP cap)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_nonce
     ON orders(nonce) WHERE nonce IS NOT NULL;
@@ -83,6 +84,14 @@ END;
 def connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path or config.DB_PATH)
     conn.row_factory = sqlite3.Row
+    try:
+        # Wait (not fail) when another handler thread holds the write lock:
+        # every store call opens its own connection under the threaded
+        # server, and the 5s sqlite default surfaces as spurious 500s under
+        # concurrent load.
+        conn.execute("PRAGMA busy_timeout=15000")
+    except sqlite3.Error:  # pragma: no cover - exotic sqlite builds
+        pass
     return conn
 
 
@@ -113,6 +122,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("parent_order_id", "TEXT"),
         ("deposit_alerted_ts", "REAL"),
         ("confirm_alerted_ts", "REAL"),
+        ("client_ip", "TEXT"),
     ):
         if col not in cols:
             conn.execute(f"ALTER TABLE orders ADD COLUMN {col} {decl}")
@@ -120,6 +130,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
 
 def init_db(db_path: Optional[str] = None) -> None:
     with db(db_path) as conn:
+        try:
+            # WAL lets the watcher poll read while a handler thread writes
+            # (rollback-journal mode would serialize them behind the file
+            # lock). Tolerant: journal_mode is a persistent DB property, so
+            # failures (unsupported filesystem) only cost concurrency.
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.Error:
+            pass
         conn.executescript(_SCHEMA)
         _migrate(conn)
 
@@ -186,6 +204,7 @@ def create_order(
     initial_status: Optional[str] = None,
     nonce: Optional[str] = None,
     parent_order_id: Optional[str] = None,
+    client_ip: str = "",
 ) -> Dict[str, Any]:
     oid = _new_id("ord" if kind == "in" else "pay")
     now = time.time()
@@ -198,8 +217,8 @@ def create_order(
         conn.execute(
             "INSERT INTO orders (id, kind, vendor_id, ref, usd_amount, maza_amount,"
             " rate, rate_source, address, status, created_ts, expires_ts, nonce,"
-            " parent_order_id)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " parent_order_id, client_ip)"
+            " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (
                 oid,
                 kind,
@@ -215,6 +234,7 @@ def create_order(
                 expires,
                 nonce,
                 parent_order_id,
+                client_ip,
             ),
         )
         append_audit(
@@ -251,6 +271,7 @@ def create_order(
         "exported_ts": None,
         "nonce": nonce,
         "parent_order_id": parent_order_id,
+        "client_ip": client_ip,
     }
     return result
 
@@ -284,7 +305,7 @@ _ORDER_COLUMNS = {
     "rate_source", "address", "status", "txid", "confirmations",
     "created_ts", "expires_ts", "paid_ts", "deposit_alerted_ts",
     "confirm_alerted_ts", "exported_ts", "nonce", "export_id",
-    "export_state", "export_lease_ts", "parent_order_id",
+    "export_state", "export_lease_ts", "parent_order_id", "client_ip",
 }
 
 
@@ -371,6 +392,23 @@ def pending_inbound() -> List[Dict[str, Any]]:
             "SELECT * FROM orders WHERE kind='in' AND status IN ('quoted','awaiting')"
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_awaiting(client_ip: Optional[str] = None) -> int:
+    """Open (quoted/awaiting) inbound orders — globally or for one client IP.
+
+    Backs the H-2 application caps on public order creation: an anonymous
+    flood can no longer grow the wallet keypool, the watcher scan set, and
+    the store without bound, because awaiting slots are finite.
+    """
+    q = "SELECT COUNT(*) AS n FROM orders WHERE kind='in' AND status IN ('quoted','awaiting')"
+    args: List[Any] = []
+    if client_ip is not None:
+        q += " AND client_ip=?"
+        args.append(client_ip)
+    with db() as conn:
+        row = conn.execute(q, args).fetchone()
+    return int(row["n"]) if row else 0
 
 
 def expired_inbound() -> List[Dict[str, Any]]:
