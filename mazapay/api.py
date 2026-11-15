@@ -1251,7 +1251,8 @@ def serve(host: Optional[str] = None, port: Optional[int] = None, with_watcher: 
     global _WATCHER
     store.init_db()
     require_safe_mode()
-    srv = Server((host or config.LISTEN_HOST, port or config.LISTEN_PORT), Handler)
+    # port=0 means "ephemeral" (test classes rely on it); only None defers to config.
+    srv = Server((host or config.LISTEN_HOST, config.LISTEN_PORT if port is None else port), Handler)
     bind = host or config.LISTEN_HOST
     if bind not in ("127.0.0.1", "::1", "localhost"):
         # The per-IP order cap and access logs trust X-Forwarded-For
