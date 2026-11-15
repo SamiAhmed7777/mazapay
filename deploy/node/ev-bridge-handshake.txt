@@ -1,0 +1,30 @@
+### LABEL: the bridge own self-test against the LIVE daemon (7 checks)
+### HOST: Samihost
+### UTC: 2026-11-15T02:40:53Z
+### KERNEL: Linux 6.8.0-147-generic x86_64 GNU/Linux
+
+### CMD:
+bash -c 
+cd /opt/mazapay && python3 -m mazapay.check_daemon --conf /var/lib/mazad/maza.conf 
+
+### OUTPUT:
+Using /var/lib/mazad/maza.conf
+Checking daemon at http://mazapay:***@127.0.0.1:12832
+
+  [PASS] daemon_reachable_and_authenticated: chain='main' blocks=0
+  [PASS] wallet_loaded: fresh address ok (MSy6ZukgocRE6xYuhs4e4DTB1LsNnN9pbn)
+         note: This consumed one address in the wallet - harmless.
+  [PASS] validateaddress: isvalid=True
+  [PASS] receive_tracking: getreceivedbyaddress ok (0.0)
+  [PASS] transaction_history: listtransactions ok (0 recent)
+  [PASS] send_capability: sendtoaddress present (rejected the invalid probe - nothing sent)
+  [PASS] wallet_balance: balance is 0
+         note: Collections work with a zero balance, but vendor payments need MAZA in this wallet. Top it up before enabling disbursements.
+
+READY - this daemon can serve the MazaPay bridge.
+Bridge settings (the password is intentionally not displayed):
+  MAZAPAY_MAZAD_RPC=http://127.0.0.1:12832
+  MAZAPAY_MAZAD_RPC_USER=mazapay
+  MAZAPAY_MAZAD_RPC_PASSWORD=<type your rpcpassword here>
+
+### EXIT: 0

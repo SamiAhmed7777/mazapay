@@ -1,0 +1,27 @@
+[Unit]
+Description=MazaCoin Core daemon (MazaPay bridge wallet)
+Documentation=https://github.com/MazaCoin/maza
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=mazad
+Group=mazad
+ExecStart=/opt/maza/maza-0.16.3/bin/mazad -datadir=/var/lib/mazad -printtoconsole
+Restart=always
+RestartSec=5
+TimeoutStopSec=60
+
+# hardening: filesystem is read-only except the data dir; RPC is 127.0.0.1-only
+# (enforced in maza.conf), so no inbound ports beyond the P2P listener.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/mazad
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

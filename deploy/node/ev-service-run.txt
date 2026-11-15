@@ -1,0 +1,35 @@
+### LABEL: daemon service state, explicit peer count, chain sync progress, deposit-address ownership
+### HOST: Samihost
+### UTC: 2026-11-15T02:43:49Z
+### KERNEL: Linux 6.8.0-147-generic x86_64 GNU/Linux
+
+### CMD:
+bash -c 
+systemctl is-active mazad
+systemctl is-enabled mazad
+systemctl show mazad -p ExecStart --no-pager | head -2
+CLI="/opt/maza/maza-0.16.3/bin/maza-cli -datadir=/var/lib/mazad"
+echo "peer count: $(sudo -u mazad $CLI getconnectioncount)"
+sudo -u mazad $CLI getblockchaininfo | grep -E "\"chain|\"blocks|\"headers|verificationprogress|initialblockdownload|size_on_disk"
+ADDR=$(sudo -u mazad $CLI getaddressesbyaccount "mazapay-bridge" | python3 -c "import sys,json; print(json.load(sys.stdin)[0])")
+sudo -u mazad $CLI validateaddress "$ADDR" | grep -E "\"address|\"isvalid|\"ismine|\"account|hdkeypath" 
+
+### OUTPUT:
+active
+enabled
+ExecStart={ path=/opt/maza/maza-0.16.3/bin/mazad ; argv[]=/opt/maza/maza-0.16.3/bin/mazad -datadir=/var/lib/mazad -printtoconsole ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+peer count: 9
+  "chain": "main",
+  "blocks": 0,
+  "headers": 1224000,
+  "verificationprogress": 1.818339271055581e-07,
+  "initialblockdownload": true,
+  "chainwork": "0000000000000000000000000000000000000000000000000000000000100010",
+  "size_on_disk": 293,
+  "isvalid": true,
+  "address": "MTpnukzxMst8gFYgaSroobKQyeeZtdhr7t",
+  "ismine": true,
+  "account": "mazapay-bridge",
+  "hdkeypath": "m/0'/0'/0'",
+
+### EXIT: 0

@@ -1,0 +1,18 @@
+# MazaCoin Core daemon config for the MazaPay bridge wallet.
+# Template - the deployed copy at /var/lib/mazad/maza.conf is 0600 mazad:mazad
+# with rpcpassword generated at install time (never stored in any repo).
+
+server=1
+daemon=0
+printtoconsole=1
+
+# RPC: localhost only - the bridge runs on the same host
+rpcbind=127.0.0.1
+rpcallowip=127.0.0.1
+rpcport=12832
+rpcuser=mazapay
+rpcpassword=<generated-at-install, openssl rand -hex 24>
+
+# NOTE: no walletnotify hook. The MazaPay watcher polls listtransactions on
+# its own interval (MAZAPAY_WATCH_INTERVAL, default 10s); the bridge does not
+# need a push hook, and a discarded-output hook would be dead weight.

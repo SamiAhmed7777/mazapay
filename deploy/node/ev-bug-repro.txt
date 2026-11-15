@@ -1,0 +1,30 @@
+### LABEL: reproduction of the REPORTED FAILURE PATTERN from r17 (path resolved relative to cwd after cd)
+### HOST: Samihost
+### UTC: 2026-11-15T02:43:49Z
+### KERNEL: Linux 6.8.0-147-generic x86_64 GNU/Linux
+
+### CMD:
+bash -c 
+mkdir -p /tmp/mazapay-bugrepro && cd /tmp/mazapay-bugrepro
+cat > buggy.sh <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+cd /opt/maza
+if [ -f "\$(dirname "\$0")/mazad.service" ]; then
+  echo "unit found - would install"
+else
+  echo "unit NOT found at \$(dirname "\$0")/mazad.service - SKIPPED silently"
+fi
+EOF
+chmod +x buggy.sh
+echo "(same invocation shape as r17: \$0=./buggy.sh from a scratch deploy dir)"
+./buggy.sh
+echo "(demonstrates: after cd /opt/maza, dirname ./buggy.sh resolves to /opt/maza, missing the unit)"
+rm -rf /tmp/mazapay-bugrepro 
+
+### OUTPUT:
+(same invocation shape as r17: $0=./buggy.sh from a scratch deploy dir)
+unit NOT found at ./mazad.service - SKIPPED silently
+(demonstrates: after cd /opt/maza, dirname ./buggy.sh resolves to /opt/maza, missing the unit)
+
+### EXIT: 0

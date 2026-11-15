@@ -1,0 +1,40 @@
+### LABEL: tarball checksum provenance: asset listing + local hash
+### HOST: Samihost
+### UTC: 2026-11-15T02:40:20Z
+### KERNEL: Linux 6.8.0-147-generic x86_64 GNU/Linux
+
+### CMD:
+bash -c 
+echo "--- official release assets (names only) ---"
+curl -fsSL -m 60 "https://api.github.com/repos/MazaCoin/maza/releases/tags/v0.16.3" | grep -o "\"name\": \"[^\"]*\"" | cut -d\" -f4
+echo "--- any SHA256SUMS asset present? ---"
+curl -fsSL -m 60 "https://api.github.com/repos/MazaCoin/maza/releases/tags/v0.16.3" | grep -ci "SHA256SUMS" || true
+echo "--- local tarball hash (TOFU pin, reproducible by re-downloading the URL in install-mazad.sh) ---"
+sha256sum /opt/maza/maza-0.16.3-x86_64-linux-gnu.tar.gz 
+
+### OUTPUT:
+--- official release assets (names only) ---
+MAZA 0.16.3
+maza-0.16.3-aarch64-linux-gnu-debug.tar.gz
+maza-0.16.3-aarch64-linux-gnu.tar.gz
+maza-0.16.3-arm-linux-gnueabihf-debug.tar.gz
+maza-0.16.3-arm-linux-gnueabihf.tar.gz
+maza-0.16.3-i686-pc-linux-gnu-debug.tar.gz
+maza-0.16.3-i686-pc-linux-gnu.tar.gz
+maza-0.16.3-osx-unsigned.dmg
+maza-0.16.3-osx64.tar.gz
+maza-0.16.3-win32-debug.zip
+maza-0.16.3-win32-setup-unsigned.exe
+maza-0.16.3-win32.zip
+maza-0.16.3-win64-debug.zip
+maza-0.16.3-win64-setup-unsigned.exe
+maza-0.16.3-win64.zip
+maza-0.16.3-x86_64-linux-gnu-debug.tar.gz
+maza-0.16.3-x86_64-linux-gnu.tar.gz
+maza-0.16.3.tar.gz
+--- any SHA256SUMS asset present? ---
+0
+--- local tarball hash (TOFU pin, reproducible by re-downloading the URL in install-mazad.sh) ---
+57ef923ecc518119bf74681a932e250fd87035e8c717f95781df1d0d303ddf48  /opt/maza/maza-0.16.3-x86_64-linux-gnu.tar.gz
+
+### EXIT: 0

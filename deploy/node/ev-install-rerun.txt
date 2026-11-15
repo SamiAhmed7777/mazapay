@@ -1,0 +1,36 @@
+### LABEL: idempotent installer rerun proves credentials preserved (identical conf hash) and unit enabled
+### HOST: Samihost
+### UTC: 2026-11-15T02:40:22Z
+### KERNEL: Linux 6.8.0-147-generic x86_64 GNU/Linux
+
+### CMD:
+bash -c 
+echo "--- BEFORE: conf hash + metadata (content never shown) ---"
+sha256sum /var/lib/mazad/maza.conf
+stat -c "%y %s bytes %a %U:%G" /var/lib/mazad/maza.conf
+echo "--- rerun installer ---"
+cd /opt/maza/deploy && ./install-mazad.sh
+echo "--- AFTER: conf hash + metadata ---"
+sha256sum /var/lib/mazad/maza.conf
+stat -c "%y %s bytes %a %U:%G" /var/lib/mazad/maza.conf
+echo "--- unit state ---"
+systemctl is-enabled mazad
+systemctl show mazad -p ExecStart --no-pager | head -2
+systemctl is-active mazad 
+
+### OUTPUT:
+--- BEFORE: conf hash + metadata (content never shown) ---
+e0dd70080e594eb35a7cbad3443487ed7dafc969362c00cb1af700d02500f202  /var/lib/mazad/maza.conf
+2026-11-15 03:34:43.240844214 +0100 266 bytes 600 mazad:mazad
+--- rerun installer ---
+install complete. start with: systemctl start mazad
+verify with: sudo -u mazad /opt/maza/maza-0.16.3/bin/maza-cli -datadir=/var/lib/mazad getblockchaininfo
+--- AFTER: conf hash + metadata ---
+e0dd70080e594eb35a7cbad3443487ed7dafc969362c00cb1af700d02500f202  /var/lib/mazad/maza.conf
+2026-11-15 03:34:43.240844214 +0100 266 bytes 600 mazad:mazad
+--- unit state ---
+enabled
+ExecStart={ path=/opt/maza/maza-0.16.3/bin/mazad ; argv[]=/opt/maza/maza-0.16.3/bin/mazad -datadir=/var/lib/mazad -printtoconsole ; ignore_errors=no ; start_time=[n/a] ; stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }
+active
+
+### EXIT: 0
