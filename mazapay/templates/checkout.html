@@ -52,6 +52,9 @@
   <div id="quote" class="quote">
     <div><span class="amount" id="maza">—</span> <span class="unit">MAZA</span></div>
     <p class="meta">Locked rate: <span id="rate">—</span> USD/MAZA (<span id="src">—</span>) · expires in <span id="ttl">—</span></p>
+    <div id="qr-box" style="display:none;margin:.9rem auto;background:#fff;padding:.5rem;border-radius:8px;width:max-content">
+      <img id="qr" alt="QR code of the payment address" width="180" height="180" style="display:block;image-rendering:pixelated">
+    </div>
     <label>Send exactly this amount to</label>
     <div class="addr" id="addr">—</div>
     <div class="row" style="margin-top:.5rem">
@@ -90,6 +93,8 @@ async function createOrder() {
     $('rate').textContent = body.rate.toFixed(6);
     $('src').textContent = body.rate_source;
     $('addr').textContent = body.address;
+    $('qr').src = '/orders/' + orderId + '/qr.svg';
+    $('qr-box').style.display = 'block';
     $('form-view').style.display = 'none';
     $('quote').style.display = 'block';
     timer = setInterval(tick, 500);

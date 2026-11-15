@@ -180,10 +180,12 @@ http://127.0.0.1:8443/
    shows the exact MAZA amount to send, the locked rate, and a
    countdown — the quote is good for **15 minutes** by default.
 3. The page shows a **MAZA deposit address** (a long string starting
-   with `M`). Use the **Copy address** button — paste it into the
-   member's wallet or give it to them. Send *exactly* the quoted MAZA
-   amount to this address. (A little *more* is fine and still credits;
-   *less* will not register.)
+   with `M`) with a **QR code** beside it — scanning the QR fills in the
+   address in most wallet apps (it is the address only; you still enter
+   the amount yourself). Prefer typing? Use the **Copy address** button
+   — paste it into the member's wallet or give it to them. Send
+   *exactly* the quoted MAZA amount to this address. (A little *more*
+   is fine and still credits; *less* will not register.)
 4. The page says **Waiting for payment…** and checks automatically
    every few seconds.
 5. Once the payment arrives and reaches **6 confirmations**, the page

@@ -56,7 +56,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from . import config, mip_export, pricing, store, watcher
+from . import config, mip_export, pricing, qr, store, watcher
 from .mazad import ChainError, get_chain, is_mock
 
 _TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "checkout.html")
@@ -519,6 +519,7 @@ _ROUTES = [
     ("GET", re.compile(r"^/vendors$"), "vendors_get", True),
     ("POST", re.compile(r"^/orders$"), "orders_post", False),
     ("GET", re.compile(r"^/orders/([\w-]+)$"), "order_get", False),
+    ("GET", re.compile(r"^/orders/([\w-]+)/qr\.svg$"), "order_qr", False),
     ("POST", re.compile(r"^/orders/([\w-]+)/simulate_payment$"), "order_simulate", True),
     ("POST", re.compile(r"^/orders/([\w-]+)/accept$"), "order_accept", True),
     ("POST", re.compile(r"^/orders/([\w-]+)/refund$"), "order_refund", True),
@@ -872,6 +873,25 @@ class Handler(BaseHTTPRequestHandler):
         if order["kind"] != "in" and not self._authorized():
             raise ApiError(404, f"order {order_id} not found")
         self._json(200, order)
+
+    def _order_qr(self, order_id: str) -> None:
+        # Same public-collect visibility as _order_get: inbound orders only,
+        # existence never leaked for outbound ids. The SVG body contains only
+        # the boolean module matrix of the address (see mazapay.qr) — no
+        # order fields, no user-controlled text — so the document is inert.
+        order = store.get_order(order_id)
+        if not order:
+            raise ApiError(404, f"order {order_id} not found")
+        if order["kind"] != "in" and not self._authorized():
+            raise ApiError(404, f"order {order_id} not found")
+        body = qr.address_svg(order["address"]).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "image/svg+xml")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
 
     def _order_simulate(self, order_id: str) -> None:
         body = self._body()
