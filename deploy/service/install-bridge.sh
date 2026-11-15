@@ -291,12 +291,18 @@ PRE_UNIT=0; [ -f "$UNIT_DST" ] && PRE_UNIT=1
 PRE_ENV=0;  [ -f "$ENV_DST" ]  && PRE_ENV=1
 PRE_CURRENT=""
 [ -L "${OPT_DIR}/current" ] && PRE_CURRENT="$(readlink "${OPT_DIR}/current")"
+[ -f "$CADDYFILE" ] || fail 3 "caddyfile missing: $CADDYFILE"
+# THREE-state ownership: the marker-delimited block we install, AND the bare
+# guard-restored copy — the caddy-guard re-appends its registered block
+# verbatim WITHOUT markers, so a post-guard-event rerun must recognize the
+# bare form too (found live 2026-11-15: marked-form-only detection appended a
+# duplicate site block and failed validation -> clean rollback, exit 1).
 if grep -q "BEGIN mazapay-bridge managed block" "$CADDYFILE" 2>/dev/null; then
-    CADDY_BLOCK_OWNER=ours
-elif [ -f "$CADDYFILE" ]; then
-    CADDY_BLOCK_OWNER=absent
+    CADDY_BLOCK_OWNER=marked
+elif grep -qE "^${CADDY_DOMAIN} \{" "$CADDYFILE" 2>/dev/null; then
+    CADDY_BLOCK_OWNER=bare
 else
-    fail 3 "caddyfile missing: $CADDYFILE"
+    CADDY_BLOCK_OWNER=absent
 fi
 if [ -d "${OPT_DIR}/releases" ] && [ "$PRE_CURRENT" = "" ] && [ -n "$(ls -A "${OPT_DIR}/releases" 2>/dev/null)" ]; then
     fail 3 "${OPT_DIR}/releases exists with no current symlink — refusing to guess (adopt manually)"
@@ -542,17 +548,36 @@ PYGUARD
 }
 CANDIDATE="${SCRATCH}/Caddyfile.candidate"
 cp "$CADDYFILE" "$CANDIDATE" || fail 2 "caddyfile copy failed"
-if [ "$CADDY_BLOCK_OWNER" = "ours" ]; then
-    python3 - "$CANDIDATE" <<'PY'
+# Replace BOTH prior-block forms: our marker-delimited block AND any bare
+# top-level block for the domain (guard-restored copies carry no markers).
+# Brace-counted removal handles the block's nested directives (request_body,
+# log/output-file). Without this, a post-guard-event rerun appends a second
+# site block for the same address and caddy validate refuses the candidate.
+python3 - "$CANDIDATE" "$CADDY_DOMAIN" <<'PY'
 import re, sys
-path = sys.argv[1]
+path, domain = sys.argv[1], sys.argv[2]
 text = open(path).read()
-text = re.sub(
-    r"# BEGIN mazapay-bridge managed block.*?# END mazapay-bridge managed block\n?",
-    "", text, flags=re.S)
-open(path, "w").write(text)
+text = re.sub(r"# BEGIN mazapay-bridge managed block.*?# END mazapay-bridge managed block\n?",
+              "", text, flags=re.S)
+lines = text.split("\n")
+out, i, removed = [], 0, 0
+while i < len(lines):
+    line = lines[i]
+    if line.strip() == domain + " {":
+        depth = line.count("{") - line.count("}")
+        i += 1
+        while i < len(lines) and depth > 0:
+            depth += lines[i].count("{") - lines[i].count("}")
+            i += 1
+        removed += 1
+        continue
+    out.append(line)
+    i += 1
+open(path, "w").write("\n".join(out))
+print("caddy: prior block removal done (unmarked removed: %d)" % removed)
 PY
-    log "caddy: replaced existing managed block"
+if [ "$CADDY_BLOCK_OWNER" != "absent" ]; then
+    log "caddy: replaced existing ${CADDY_BLOCK_OWNER} block"
 fi
 cat >>"$CANDIDATE" <<EOF
 

@@ -413,6 +413,47 @@ ck "creation reported on transcript" grep -qE "log dir created|access log pre-cr
 leak_check "$sbx"
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
+echo "== S14: guard-restored BARE block (no markers) -> replaced, not duplicated"
+sbx="$(new_sbx s14)"
+# Seed the EXACT bare form caddy-guard writes (byte-shape of the PYGUARD
+# block: label + tab-indented directives, no marker comments) + a decoy
+# second bare block to prove brace-counted removal handles N blocks.
+write_bare_block() { # $1 = file, $2 = upstream port (decoy differs)
+    cat >>"$1" <<EOF
+sandbox.mazapay.invalid {
+	@healthcheck path /health
+	respond @healthcheck 403
+	@adminsurface path /vendors /vendors/* /payments /payments/* /watch /watch/* /export /export/*
+	respond @adminsurface 404
+	request_body {
+		max_size 1MB
+	}
+	encode gzip
+	log {
+		output file $sbx/var/log/caddy/sandbox.mazapay.invalid.access.log {
+			roll_size 100MB
+			roll_keep 5
+		}
+		format json
+	}
+	reverse_proxy 127.0.0.1:$2
+}
+EOF
+}
+write_bare_block "$sbx/etc/caddy/Caddyfile" 18500
+write_bare_block "$sbx/etc/caddy/Caddyfile" 18999
+rc="$(run_install "$sbx")"
+ck "exit 0 (was duplicate-validate-fail before the fix)" rc_is "$rc" 0
+ck "prestate detected the bare form" file_has "$sbx/logs/run.log" "caddy_block=bare"
+ck "removal reported both unmarked blocks" file_has "$sbx/logs/run.log" "unmarked removed: 2)"
+ck "exactly ONE site block remains" [ "$(grep -c '^sandbox.mazapay.invalid {' "$sbx/etc/caddy/Caddyfile")" = "1" ]
+ck "markers present on the surviving block" file_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge managed block"
+ck "surviving block points at 18500" [ "$(grep -c 'reverse_proxy 127.0.0.1:18500' "$sbx/etc/caddy/Caddyfile")" = "1" ]
+ck "original non-mazapay site kept" file_has "$sbx/etc/caddy/Caddyfile" "sbxsites.example"
+ck "no decoy port survives" not_has "$sbx/etc/caddy/Caddyfile" "reverse_proxy 127.0.0.1:18999"
+leak_check "$sbx"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
 echo
 echo "assertions: $PASS passed, $FAIL failed"
 if [ "$FAIL" -eq 0 ]; then
