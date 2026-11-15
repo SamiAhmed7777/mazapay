@@ -171,13 +171,34 @@ def _alignment_positions(size: int, version: int) -> List[int]:
     return sorted(positions)
 
 
+def _build_gf_tables() -> Tuple[List[int], List[int]]:
+    """Log/exp tables for GF(2^8) modulo 0x11D (alpha = 0x02), built once.
+
+    _GF_EXP[i] is alpha^i for i < 255 and repeats for i < 512 so log-based
+    multiplies never index out of range; _GF_LOG is the inverse map.
+    """
+    exp = [0] * 512
+    log = [0] * 256
+    x = 1
+    for i in range(255):
+        exp[i] = x
+        log[x] = i
+        x <<= 1
+        if x & 0x100:
+            x ^= 0x11D
+    for i in range(255, 512):
+        exp[i] = exp[i - 255]
+    return exp, log
+
+
+_GF_EXP, _GF_LOG = _build_gf_tables()
+
+
 def _gf_mul(x: int, y: int) -> int:
-    """Multiply in GF(2^8) modulo 0x11D (Russian peasant multiplication)."""
-    z = 0
-    for i in reversed(range(8)):
-        z = (z << 1) ^ ((z >> 7) * 0x11D)
-        z ^= ((y >> i) & 1) * x
-    return z
+    """Multiply in GF(2^8) modulo 0x11D (log/exp table lookup)."""
+    if x == 0 or y == 0:
+        return 0
+    return _GF_EXP[_GF_LOG[x] + _GF_LOG[y]]
 
 
 def _syndromes_zero(codewords: Sequence[int], ecc_len: int) -> bool:
@@ -187,10 +208,9 @@ def _syndromes_zero(codewords: Sequence[int], ecc_len: int) -> bool:
     codeword evaluates to zero at every root (remainder-free). Any nonzero
     syndrome means uncorrected damage — reported, never repaired.
     """
+    exp = _GF_EXP
     for i in range(ecc_len):
-        root = 1  # alpha^i, built by repeated multiplication by alpha=0x02
-        for _ in range(i):
-            root = _gf_mul(root, 2)
+        root = exp[i]  # alpha^i
         s = 0
         for b in codewords:
             s = _gf_mul(s, root) ^ b

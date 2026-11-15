@@ -324,5 +324,84 @@ class TestServedQrDecodesToAddress(unittest.TestCase):
         self.assertEqual(qrdecode.decode_svg(svg), order["address"])
 
 
+class TestIsoPadBytePattern(unittest.TestCase):
+    """ISO/IEC 18004 tail conformance for the checkout payloads.
+
+    After the data segment and its 4-bit terminator, the pad bits to the
+    next byte boundary are zero and the remaining data codewords alternate
+    0xEC, 0x11 starting with 0xEC. The boundary arithmetic here is derived
+    from the ISO 18004 constants (4-bit mode indicator, byte-mode char
+    count 8 bits for v1-9 / 16 bits for v10+, 8 bits per payload byte,
+    4-bit terminator) rather than the decoder's own tables, so the
+    assertion checks the standard, not the module under test.
+    """
+
+    @staticmethod
+    def _raw_data_stream(svg_text):
+        """Recover (version, data-codeword stream) via the decoder internals."""
+        matrix, version = qrdecode._svg_to_matrix(svg_text)
+        func = qrdecode._function_map(len(matrix), version)
+        ecc_ordinal, mask = qrdecode._read_format_info(matrix, len(matrix))
+        raw_cw = qrdecode._num_raw_data_modules(version) // 8
+        codewords = qrdecode._read_codewords(
+            qrdecode._unmasked(matrix, func, mask), func, len(matrix), raw_cw
+        )
+        return version, qrdecode._deinterleave(codewords, version, ecc_ordinal)
+
+    def _assert_iso_tail(self, payload):
+        version, stream = self._raw_data_stream(qr.address_svg(payload))
+        ccount_bits = 8 if version < 10 else 16
+        bits = 4 + ccount_bits + 8 * len(payload) + 4
+        pad_start, slack = divmod(bits, 8)
+        if slack:
+            # terminator pad bits: the low-order bits of the last content byte
+            self.assertEqual(
+                stream[pad_start] & ((1 << (8 - slack)) - 1), 0,
+                "version %d: terminator pad bits are not zero" % version,
+            )
+            pad_start += 1
+        pad = stream[pad_start:]
+        self.assertGreaterEqual(
+            len(pad), 2, "version %d: fixture left no pad bytes to check" % version
+        )
+        for i, byte in enumerate(pad):
+            self.assertEqual(
+                byte, 0xEC if i % 2 == 0 else 0x11,
+                "version %d pad byte %d: 0x%02X breaks the 0xEC/0x11 alternation"
+                % (version, i, byte),
+            )
+
+    def test_pad_alternation_address_like(self):
+        # mixed-case payload forces byte mode in the vendored encoder
+        self._assert_iso_tail(_ADDRESS_LIKE)
+
+    def test_pad_alternation_long_payload(self):
+        self._assert_iso_tail(_LONG_PAYLOAD)
+
+
+class TestGfMulTables(unittest.TestCase):
+    """The exp/log refactor must be behavior-identical to the bitwise reference."""
+
+    @staticmethod
+    def _peasant_reference(x, y):
+        z = 0
+        for i in reversed(range(8)):
+            z = (z << 1) ^ ((z >> 7) * 0x11D)
+            z ^= ((y >> i) & 1) * x
+        return z
+
+    def test_full_sweep_matches_peasant_reference(self):
+        for x in range(256):
+            for y in range(256):
+                self.assertEqual(
+                    qrdecode._gf_mul(x, y), self._peasant_reference(x, y),
+                    "_gf_mul(0x%02X, 0x%02X)" % (x, y),
+                )
+
+    def test_exp_log_tables_are_inverse_maps(self):
+        for i in range(255):
+            self.assertEqual(qrdecode._GF_LOG[qrdecode._GF_EXP[i]], i)
+
+
 if __name__ == "__main__":
     unittest.main()
