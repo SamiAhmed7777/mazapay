@@ -592,6 +592,9 @@ def _admin_query(raw: Dict[str, Any]) -> Tuple[Optional[str], Optional[str], int
     kind/status mirror store.list_orders; format picks html (default) or json;
     limit bounds the page (1..ADMIN_MAX_LIMIT, default ADMIN_PAGE_LIMIT).
     Anything malformed is a 400 — the dashboard never guesses.
+    Contract note: the four known names (kind, status, format, limit) are the
+    whole contract — UNKNOWN query params are silently ignored, so an old
+    bookmark carrying a future parameter keeps working instead of 400ing.
     """
     kind = (raw.get("kind") or [""])[0] or None
     if kind is not None and kind not in ("in", "out"):
@@ -910,6 +913,9 @@ class Handler(BaseHTTPRequestHandler):
         try:
             data = json.loads(data.decode("utf-8"))
         except (ValueError, UnicodeDecodeError, RecursionError):
+            # UnicodeDecodeError IS a ValueError subclass — listed anyway so
+            # the two failure modes read at a glance: invalid UTF-8 bytes vs
+            # malformed JSON. RecursionError covers absurdly nested bodies.
             self.close_connection = True
             raise ApiError(400, "invalid JSON body") from None
         if not isinstance(data, dict):
@@ -934,13 +940,15 @@ class Handler(BaseHTTPRequestHandler):
             # RFC 7235: a 401 SHOULD carry WWW-Authenticate. The Basic
             # challenge is what makes a plain browser pop its login prompt
             # on /admin (the non-CLI operator flow); Bearer stays first-class
-            # for scripts. Both name the same credential.
+            # for scripts and names its realm too (RFC 6750 §3), so both
+            # challenge schemes point at the same credential.
             return self._json(
                 401,
                 {"error": "missing or invalid Authorization header (Bearer"
                  " token, or Basic auth with the token as the password)"},
                 extra_headers={
-                    "WWW-Authenticate": 'Basic realm="mazapay-admin", Bearer'
+                    "WWW-Authenticate": 'Basic realm="mazapay-admin",'
+                                        ' Bearer realm="mazapay-admin"'
                 },
             )
         try:

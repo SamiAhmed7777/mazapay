@@ -93,10 +93,11 @@ class TestAdminDashboard(unittest.TestCase):
                 self.assertEqual(status, 401, body)
                 self.assertIn("Authorization", body)
                 # RFC 7235: the 401 must challenge, or a plain browser never
-                # pops its login prompt on the dashboard.
+                # pops its login prompt on the dashboard. RFC 6750 §3: the
+                # Bearer challenge names its realm too.
                 www = {k.lower(): v for k, v in headers.items()}.get("www-authenticate", "")
                 self.assertIn('Basic realm="mazapay-admin"', www)
-                self.assertIn("Bearer", www)
+                self.assertIn('Bearer realm="mazapay-admin"', www)
 
     def test_basic_auth_browser_flow(self):
         """Browsers prompt for Basic natively — the non-CLI operator path."""
@@ -234,3 +235,62 @@ class TestAdminDashboard(unittest.TestCase):
                 status, body, _ = self._get(path)
                 self.assertEqual(status, 400, body)
                 self.assertIn("error", body)
+
+    def test_admin_unknown_query_params_ignored(self):
+        """Contract: unknown query params are silently ignored (the _admin_query
+        docstring promises this) — an old bookmark carrying a future parameter
+        keeps working instead of 400ing."""
+        base = self._get_json("/admin?format=json")[1]
+        for path in ("/admin?format=json&bogus=1", "/admin?format=json&vibe=check&x=%20"):
+            with self.subTest(path=path):
+                status, snap = self._get_json(path)
+                self.assertEqual(status, 200)
+                self.assertEqual(snap["filters"], base["filters"])
+        # HTML mode ignores them too (never a 5xx on odd input)
+        status, body, _ = self._get("/admin?bogus=1")
+        self.assertEqual(status, 200)
+        self.assertIn("MazaPay orders", body)
+
+
+class TestFmtTsOddInputs(unittest.TestCase):
+    """Pure-unit pin: _fmt_ts must not raise on representative stored-data
+    oddities — a dashboard cell renders whatever the store hands it. Values
+    below are the observed pass-through behaviors (checked against the live
+    function, not assumed). Scoped claim: these cover the value space a store
+    row can actually carry (JSON scalars, strings, numbers, containers), not
+    every conceivable Python object."""
+
+    def test_valid_epochs_format(self):
+        self.assertEqual(api._fmt_ts(1769932800), "2026-02-01 08:00:00Z")
+        self.assertEqual(api._fmt_ts(0), "1970-01-01 00:00:00Z")
+        # blank-ish values render empty (no junk cells)
+        self.assertEqual(api._fmt_ts(None), "")
+        self.assertEqual(api._fmt_ts(""), "")
+
+    def test_odd_values_pass_through_as_strings(self):
+        # (value, expected) pairs — a dict would need hashable keys and the
+        # odd inputs here are deliberately not.
+        cases = (
+            ("junk", "junk"),                     # non-numeric str -> as-is
+            (float("nan"), "nan"),                # gmtime ValueError -> str()
+            (float("inf"), "inf"),                # gmtime OverflowError -> str()
+            (10**20, "100000000000000000000"),    # out-of-range int -> str()
+            ({"a": 1}, "{'a': 1}"),               # dict -> str()
+            ([1, 2], "[1, 2]"),                   # list -> str()
+            (True, "1970-01-01 00:00:01Z"),       # bools are ints: formatted
+        )
+        for value, expected in cases:
+            with self.subTest(value=repr(value)):
+                self.assertEqual(api._fmt_ts(value), expected)
+
+    def test_representative_odd_values_do_not_raise(self):
+        # Scoped honesty: this pins representative stored-data oddities, not
+        # all possible Python objects (an adversarial object could still raise
+        # inside its own __float__/__str__).
+        nasty = [None, "", "junk", 0, -1, 10**30, float("nan"), float("inf"),
+                 float("-inf"), True, False, {"x": "y"}, [1], ("t",), {1, 2},
+                 object(), b"1769932800", " 100.5 ", 1.5, "2026-01-01"]
+        for value in nasty:
+            with self.subTest(value=repr(value)):
+                result = api._fmt_ts(value)
+                self.assertIsInstance(result, str)
