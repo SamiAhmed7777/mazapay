@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pay with MAZA</title>
+<style>
+  :root { --bg:#0e1116; --card:#171c24; --text:#e8eaf0; --muted:#8b93a3; --accent:#f5b400; --ok:#3fb96f; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         background: var(--bg); color: var(--text); display:flex; justify-content:center; padding: 2rem 1rem; }
+  .card { background: var(--card); border-radius: 14px; padding: 2rem; width: 100%; max-width: 460px;
+          box-shadow: 0 8px 30px rgba(0,0,0,.4); }
+  h1 { margin: 0 0 .25rem; font-size: 1.5rem; }
+  .sub { color: var(--muted); margin: 0 0 1.5rem; font-size: .95rem; }
+  label { display:block; font-size:.85rem; color: var(--muted); margin-bottom:.35rem; }
+  .row { display:flex; gap:.5rem; }
+  input[type=number] { flex:1; background:#0b0e13; border:1px solid #2a3140; color:var(--text);
+        border-radius:8px; padding:.75rem 1rem; font-size:1.05rem; }
+  button { background: var(--accent); color:#111; border:none; border-radius:8px; padding:.75rem 1.2rem;
+           font-weight:700; cursor:pointer; font-size:1rem; }
+  button:disabled { opacity:.5; cursor:default; }
+  .quote { display:none; margin-top:1.5rem; }
+  .amount { font-size: 2rem; font-weight: 800; color: var(--accent); }
+  .unit { font-size: 1rem; color: var(--muted); }
+  .addr { background:#0b0e13; border:1px solid #2a3140; border-radius:8px; padding:.7rem .9rem;
+          font-family: ui-monospace, monospace; font-size:.85rem; word-break: break-all; color:#c9d1e0; }
+  .meta { color: var(--muted); font-size:.85rem; margin-top:.5rem; }
+  .status { margin-top:1rem; padding:.7rem 1rem; border-radius:8px; background:#0b0e13;
+            border:1px solid #2a3140; font-size:.95rem; }
+  .status.paid { border-color: var(--ok); color: var(--ok); font-weight:700; }
+  .banner { display:none; margin:-.5rem 0 1.25rem; padding:.55rem .9rem; border-radius:8px;
+            background:#3a2b00; color:var(--accent); font-size:.85rem; }
+  .fine { color: var(--muted); font-size:.78rem; margin-top:1.5rem; line-height:1.5; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Pay with MAZA</h1>
+  <p class="sub">MazaCoin payments, settled in USD on the books.</p>
+  <div id="mock-banner" class="banner">Demo mode (mock chain) — no real MAZA moves.</div>
+
+  <div id="form-view">
+    <label for="usd">Amount (USD)</label>
+    <div class="row">
+      <input id="usd" type="number" min="0.01" step="0.01" placeholder="25.00">
+      <button id="go" onclick="createOrder()">Quote</button>
+    </div>
+    <p id="err" class="meta" style="color:#e26d5a"></p>
+  </div>
+
+  <div id="quote" class="quote">
+    <div><span class="amount" id="maza">—</span> <span class="unit">MAZA</span></div>
+    <p class="meta">Locked rate: <span id="rate">—</span> USD/MAZA (<span id="src">—</span>) · expires in <span id="ttl">—</span></p>
+    <label>Send exactly this amount to</label>
+    <div class="addr" id="addr">—</div>
+    <div class="row" style="margin-top:.5rem">
+      <button onclick="copyAddr(this)" style="flex:1">Copy address</button>
+    </div>
+    <div class="status" id="status">Waiting for payment…</div>
+  </div>
+
+  <p class="fine">
+    Payments are watched on-chain and credited after
+    <span id="conf">6</span> confirmations. Your receipt records the exact
+    USD value at the locked rate for accounting.
+  </p>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+let orderId = null, expiresAt = null, timer = null, poller = null;
+
+fetch('/health').then(r => r.json()).then(h => {
+  $('conf').textContent = h.confirmations_required;
+  if (h.chain_mode === 'mock') $('mock-banner').style.display = 'block';
+});
+
+async function createOrder() {
+  const usd = parseFloat($('usd').value);
+  if (!(usd > 0)) { $('err').textContent = 'Enter a positive USD amount.'; return; }
+  $('err').textContent = ''; $('go').disabled = true;
+  try {
+    const r = await fetch('/orders', { method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ usd_amount: usd, ref: 'checkout-page' }) });
+    const body = await r.json();
+    if (!r.ok) { $('err').textContent = body.error || 'Could not create the order.'; return; }
+    orderId = body.id; expiresAt = body.expires_ts * 1000;
+    $('maza').textContent = body.maza_amount.toLocaleString();
+    $('rate').textContent = body.rate.toFixed(6);
+    $('src').textContent = body.rate_source;
+    $('addr').textContent = body.address;
+    $('form-view').style.display = 'none';
+    $('quote').style.display = 'block';
+    timer = setInterval(tick, 500);
+    tick(); poller = setInterval(check, 4000);
+  } finally { $('go').disabled = false; }
+}
+
+function tick() {
+  const left = Math.max(0, Math.floor((expiresAt - Date.now()) / 1000));
+  $('ttl').textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+}
+
+async function check() {
+  const r = await fetch('/orders/' + orderId);
+  if (!r.ok) return;
+  const o = await r.json();
+  if (o.status === 'paid') {
+    $('status').textContent = '✓ Payment confirmed — thank you!';
+    $('status').classList.add('paid');
+    clearInterval(poller); clearInterval(timer);
+  } else if (o.status === 'expired' || o.status === 'late_paid') {
+    $('status').textContent = 'Quote expired — start a new payment.';
+    clearInterval(poller); clearInterval(timer);
+  }
+}
+
+function copyAddr(btn) {
+  navigator.clipboard.writeText($('addr').textContent);
+  btn.textContent = 'Copied ✓';
+  setTimeout(() => btn.textContent = 'Copy address', 1500);
+}
+</script>
+</body>
+</html>
