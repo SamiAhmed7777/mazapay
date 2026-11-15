@@ -35,6 +35,7 @@ new_sbx() { # $1 = scenario name
     local sbx="/tmp/mzp-sbx-${s}.$$"
     rm -rf "$sbx"; mkdir -p "$sbx"
     mkdir -p "$sbx"/{shims,logs,opt,proc,lock,etc/systemd/system,etc/caddy,etc}
+    mkdir -p "$sbx/var/log/caddy"   # caddy's log dir exists on any logging host
     # fixture source tree — REPO-ROOT shaped (the installer stages the root;
     # the unit resolves `python3 -m mazapay.api` from WorkingDirectory=release).
     # api.py carries a relative import so the import-resolution assertions
@@ -186,6 +187,8 @@ ck "caddy block ends" file_has "$sbx/etc/caddy/Caddyfile" "# END mazapay-bridge 
 ck "health blocked at edge" file_has "$sbx/etc/caddy/Caddyfile" "respond @healthcheck 403"
 ck "admin routes off public vhost" file_has "$sbx/etc/caddy/Caddyfile" "@adminsurface path /vendors"
 ck "reverse proxy target" file_has "$sbx/etc/caddy/Caddyfile" "reverse_proxy 127.0.0.1:18500"
+ck "access-log directive in installed block" file_has "$sbx/etc/caddy/Caddyfile" "output file $sbx/var/log/caddy/sandbox.mazapay.invalid.access.log"
+ck "access log pre-created 0600 (validate-as-root trap closed)" mode_is "$sbx/var/log/caddy/sandbox.mazapay.invalid.access.log" "600"
 ck "original caddy site kept" file_has "$sbx/etc/caddy/Caddyfile" "sbxsites.example"
 ck "user shim ran" [ -f "$sbx/user_added" ]
 ck "service started" grep -q "systemctl start mazapay.service" "$sbx/logs/systemctl.log"
@@ -339,6 +342,8 @@ rc="$(run_install "$sbx")"
 ck "exit 0" rc_is "$rc" 0
 ck "preguard carries the upstream line" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" "reverse_proxy 127.0.0.1:18500"
 ck "merged carries the upstream line" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt" "reverse_proxy 127.0.0.1:18500"
+ck "preguard carries the access-log directive" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" "output file $sbx/var/log/caddy/sandbox.mazapay.invalid.access.log"
+ck "merged carries the access-log directive" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt" "output file $sbx/var/log/caddy/sandbox.mazapay.invalid.access.log"
 ck "preguard label is the sandbox domain" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" "sandbox.mazapay.invalid {"
 ck "registered BEFORE caddy swap (log order)" [ "$(grep -n 'vhost registered in guard state files' "$sbx/logs/run.log" | cut -d: -f1)" -lt "$(grep -n 'caddy: block installed' "$sbx/logs/run.log" | cut -d: -f1)" ]
 rc2="$(run_install "$sbx")"

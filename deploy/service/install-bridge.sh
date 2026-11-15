@@ -42,6 +42,7 @@ LISTEN_HOST="127.0.0.1"
 # the health probe reads SamiPanel's 404). Found live 2026-11-15.
 LISTEN_PORT="18500"
 CADDY_DOMAIN="mazapay.sami-ahmed.net"
+LOG_DIR="/var/log/caddy"   # sandbox: overridden below; path derived after the SANDBOX block
 HOST_PUB_IP="194.163.161.162"   # samihost public v4 — the DNS gate's expected A record
 LEGACY_PORT="18443"
 # caddy-guard state files (Samihost reconciler): SamiPanel's Caddyfile generator
@@ -71,8 +72,10 @@ if [ -n "${SANDBOX_ROOT:-}" ]; then
     RUN_USER="${SANDBOX_RUN_USER:-mazapay-sbx}"
     TREE_SRC="${SANDBOX_TREE_SRC:?SANDBOX_TREE_SRC required}"
     UNIT_SRC="${SANDBOX_UNIT_SRC:?SANDBOX_UNIT_SRC required}"
+    LOG_DIR="${SANDBOX_ROOT}/var/log/caddy"
     mkdir -p "$LOCK_DIR"
 fi
+LOG_PATH="${LOG_DIR}/${CADDY_DOMAIN}.access.log"
 
 if [ -z "${SANDBOX_ROOT:-}" ]; then
     UNIT_SRC="${SCRIPT_DIR}/../mazapay.service"
@@ -491,9 +494,9 @@ register_guard_block() {
         log "caddy-guard not present on this host — skipping block registration"
         return 0
     fi
-    python3 - "$GUARD_PREGUARD" "$GUARD_BLOCKS" "$CADDY_DOMAIN" "${LISTEN_HOST}:${LISTEN_PORT}" <<'PYGUARD' || fail 2 "caddy-guard registration failed — a panel Caddyfile regen would drop the vhost (guard copies kept; rerun the installer after fixing)"
+    python3 - "$GUARD_PREGUARD" "$GUARD_BLOCKS" "$CADDY_DOMAIN" "${LISTEN_HOST}:${LISTEN_PORT}" "$LOG_PATH" <<'PYGUARD' || fail 2 "caddy-guard registration failed — a panel Caddyfile regen would drop the vhost (guard copies kept; rerun the installer after fixing)"
 import os, sys
-preguard, merged, label, upstream = sys.argv[1:5]
+preguard, merged, label, upstream, logpath = sys.argv[1:6]
 block = (
     "%s {\n"
     "\t@healthcheck path /health\n"
@@ -504,8 +507,15 @@ block = (
     "\t\tmax_size 1MB\n"
     "\t}\n"
     "\tencode gzip\n"
+    "\tlog {\n"
+    "\t\toutput file %s {\n"
+    "\t\t\troll_size 100MB\n"
+    "\t\t\troll_keep 5\n"
+    "\t\t}\n"
+    "\t\tformat json\n"
+    "\t}\n"
     "\treverse_proxy %s\n"
-    "}" % (label, upstream)
+    "}" % (label, logpath, upstream)
 )
 def ensure(path):
     parent = os.path.dirname(path)
@@ -556,10 +566,27 @@ ${CADDY_DOMAIN} {
 		max_size 1MB
 	}
 	encode gzip
+	log {
+		output file ${LOG_PATH} {
+			roll_size 100MB
+			roll_keep 5
+		}
+		format json
+	}
 	reverse_proxy ${LISTEN_HOST}:${LISTEN_PORT}
 }
 # END mazapay-bridge managed block
 EOF
+# caddy validate INSTANTIATES log writers — as root it would create the access
+# log root-owned 0600 and the later in-service reload (user caddy) then fails
+# with permission denied (found live 2026-11-15). Pre-create it owned like the
+# log dir so both validate and the service open the same caddy-owned file.
+if [ -d "$LOG_DIR" ]; then
+    [ -e "$LOG_PATH" ] || touch "$LOG_PATH"
+    chown --reference="$LOG_DIR" "$LOG_PATH" 2>/dev/null || true
+    chmod 600 "$LOG_PATH"
+    log "caddy: access log pre-created ($LOG_PATH)"
+fi
 if ! caddy validate --adapter caddyfile --config "$CANDIDATE" >/dev/null 2>&1; then
     fail 2 "candidate Caddyfile failed validation — live file untouched"
 fi
