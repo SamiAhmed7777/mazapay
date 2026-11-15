@@ -35,11 +35,15 @@ new_sbx() { # $1 = scenario name
     local sbx="/tmp/mzp-sbx-${s}.$$"
     rm -rf "$sbx"; mkdir -p "$sbx"
     mkdir -p "$sbx"/{shims,logs,opt,proc,lock,etc/systemd/system,etc/caddy,etc}
-    # fixture source tree
+    # fixture source tree — REPO-ROOT shaped (the installer stages the root;
+    # the unit resolves `python3 -m mazapay.api` from WorkingDirectory=release).
+    # api.py carries a relative import so the import-resolution assertions
+    # exercise real package mechanics, not just file presence.
     mkdir -p "$sbx/tree/mazapay/templates"
-    printf 'def placeholder():\n    return "sandbox tree"\n' > "$sbx/tree/mazapay/api.py"
+    printf 'from . import config\n\n\ndef placeholder():\n    return "sandbox tree"\n' > "$sbx/tree/mazapay/api.py"
     printf 'LISTEN_PORT = 8443\n' > "$sbx/tree/mazapay/config.py"
     printf '<html>sbx checkout</html>\n' > "$sbx/tree/mazapay/templates/checkout.html"
+    printf '# repo root marker\n' > "$sbx/tree/README.md"
     # fixture rpc conf (secret values are fixtures)
     printf 'server=1\nrpcbind=127.0.0.1\nrpcport=12832\nrpcuser=sbxuser\nrpcpassword=%s\n' \
         "$RPC_SECRET" > "$sbx/rpc.conf"
@@ -127,7 +131,7 @@ run_install() { # $1 = sbx ; remaining args: extra VAR=val exported to the insta
         export SANDBOX_CADDYFILE="$sbx/etc/caddy/Caddyfile"
         export SANDBOX_RPC_CONF="$sbx/rpc.conf"
         export SANDBOX_PROC_DIR="$sbx/proc"
-        export SANDBOX_TREE_SRC="$sbx/tree/mazapay"
+        export SANDBOX_TREE_SRC="$sbx/tree"
         export SANDBOX_UNIT_SRC="$REAL_UNIT"
         export PATH="$sbx/shims:$PATH"
         export SLEEP_FAST=1
@@ -158,7 +162,10 @@ ck "env carries RPC URL" file_has "$sbx/etc/mazapay.env" "MAZAPAY_MAZAD_RPC=http
 ck "token is 64 hex" grep -qE '^MAZAPAY_API_TOKEN=[0-9a-f]{64}$' "$sbx/etc/mazapay.env"
 rel="$(readlink "$sbx/opt/current")"
 ck "current symlink set" [ -n "$rel" ] && [ -d "$rel" ]
-ck "release carries templates" [ -f "$rel/templates/checkout.html" ]
+ck "release is repo-ROOT (mazapay package nested, not flattened)" [ -f "$rel/mazapay/api.py" ]
+ck "release carries templates" [ -f "$rel/mazapay/templates/checkout.html" ]
+modrc="$( cd "$rel" && python3 -B -c 'import mazapay.api' >/dev/null 2>&1; echo $?)"
+ck "staged tree resolves 'import mazapay.api' from its root (unit ExecStart mechanics)" rc_is "$modrc" 0
 ck "caddy block begins" file_has "$sbx/etc/caddy/Caddyfile" "# BEGIN mazapay-bridge managed block"
 ck "caddy block ends" file_has "$sbx/etc/caddy/Caddyfile" "# END mazapay-bridge managed block"
 ck "health blocked at edge" file_has "$sbx/etc/caddy/Caddyfile" "respond @healthcheck 403"

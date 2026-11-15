@@ -63,8 +63,11 @@ fi
 if [ -z "${SANDBOX_ROOT:-}" ]; then
     UNIT_SRC="${SCRIPT_DIR}/../mazapay.service"
     [ -f "${SCRIPT_DIR}/mazapay.service" ] && UNIT_SRC="${SCRIPT_DIR}/mazapay.service"
-    TREE_SRC="${SCRIPT_DIR}/../../mazapay"          # repo package dir
-    [ -d "${SCRIPT_DIR}/mazapay" ] && TREE_SRC="${SCRIPT_DIR}/mazapay"
+    # TREE_SRC is the REPO ROOT (parent of the mazapay/ package): the unit runs
+    # `python3 -m mazapay.api` with WorkingDirectory=/opt/mazapay/current, and
+    # `-m` resolves packages from cwd — so a release must CONTAIN mazapay/,
+    # not BE the package dir. (The 132870e run crashed-looped exactly here.)
+    TREE_SRC="${SCRIPT_DIR}/../.."
 fi
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)-$$"   # pid suffix: same-second reruns can't collide
@@ -234,8 +237,8 @@ PY
 
 # --- preflight (READ-ONLY; journal before any mutation) -----------------------
 log "preflight: source tree + environment checks"
-[ -f "$TREE_SRC/api.py" ] && [ -d "$TREE_SRC/templates" ] \
-    || fail 3 "source tree incomplete: $TREE_SRC (need api.py + templates/)"
+[ -f "$TREE_SRC/mazapay/api.py" ] && [ -d "$TREE_SRC/mazapay/templates" ] \
+    || fail 3 "source tree incomplete: $TREE_SRC (need mazapay/api.py + mazapay/templates/ at the repo ROOT)"
 
 # Syntax gate on every .py we are about to ship.
 if ! find "$TREE_SRC" -name '*.py' -print0 | xargs -0 -n1 python3 -m py_compile \
@@ -300,6 +303,16 @@ if ! diff -u "${SCRATCH}/manifest.src" "${SCRATCH}/manifest.rel" \
     fail 3 "staged tree manifest mismatch — release discarded, nothing mutated"
 fi
 log "staged tree verified: $(wc -l <"${SCRATCH}/manifest.rel") files byte-identical"
+
+# Module-resolution gate: the unit runs `python3 -m mazapay.api` with
+# WorkingDirectory=the release dir — prove the interpreter resolves the
+# package from the staged ROOT before anything is activated (-B: no
+# bytecode writes into the release). Catches release-layout bugs (a release
+# that IS the package dir crash-loops the unit) pre-mutation.
+if ! ( cd "$REL_DIR" && python3 -B -c 'import mazapay.api' ) >/dev/null 2>&1; then
+    rm -rf "$REL_DIR"
+    fail 3 "staged tree does not resolve 'mazapay.api' from its root — python3 -m mazapay.api would crash-loop; release discarded, nothing mutated"
+fi
 
 # --- secrets env (in-process; values never printed) ---------------------------
 if [ "$PRE_ENV" -eq 1 ]; then
