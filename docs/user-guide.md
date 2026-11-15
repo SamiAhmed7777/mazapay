@@ -329,12 +329,13 @@ Fix, re-run `python3 -m mazapay.check_daemon`, and repeat until READY.
 
 ### "price feed unavailable" when quoting
 
-The live price service (a public MAZA price feed) didn't answer — bad
-internet moment or the feed is down. Nothing was lost; just try the
-quote again in a minute. No order is ever priced from a stale or made-up
-rate without your operator explicitly allowing it, so until the feed
-recovers, quoting simply pauses. Your operator can also configure a
-backup price source.
+The bridge checks a primary public price feed first, then automatically
+tries its backup feed — so one feed having a bad moment usually costs
+nothing. Only if **both** live feeds fail does quoting stop. Nothing was
+lost; just try the quote again in a minute. No order is ever priced from a
+stale or made-up rate without your operator explicitly allowing it, so
+until a feed answers, the bridge refuses to guess rather than misprice an
+order.
 
 ### "Quote expired — start a new payment," but I already sent the MAZA
 
@@ -373,9 +374,10 @@ No. Everything in this guide is a web page, a terminal command, or a
 MIP import — the same tools you already use.
 
 **Where does the exchange rate come from?**
-A public MAZA/USD price feed (CoinPaprika by default — no account or
-API key required; CoinLore can be configured as an alternative). Each
-order's locked rate and its source are recorded for the audit trail.
+A public MAZA/USD price feed — CoinPaprika by default (no account or
+API key required), with automatic failover to CoinLore if the primary
+doesn't answer. Each order's locked rate and the source that actually
+served it are recorded for the audit trail.
 
 **Why does the rate "lock"?**
 So the books match reality. The USD you quote the member is the USD

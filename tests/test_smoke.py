@@ -119,6 +119,9 @@ class TestHttpSmokeSweep(unittest.TestCase):
             self.assertTrue(health["ok"])
             self.assertEqual(health["chain_mode"], "mock")
             self.assertEqual(health["auth_mode"], "token")
+            # per-source price-feed status (live failover lane, 2026-11-15)
+            self.assertIn("price_feed", health)
+            self.assertIn("sources", health["price_feed"])
 
     def test_collect_is_public_and_get_order_visible_to_member(self):
         status, order = self._req("POST", "/orders", {"usd_amount": 20.0, "ref": "smoke-collect"}, token=None)

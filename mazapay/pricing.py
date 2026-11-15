@@ -7,15 +7,21 @@ Money math is Decimal end to end: quotes are computed in Decimal and only
 converted to float at the storage boundary (SQLite REAL columns), so the
 rounding semantics are exact decimal ROUND_DOWN, not binary-float artifacts.
 
-Fallback policy (auditable, not silent): if the primary source fails, the
-synthetic fixed price is used ONLY when PRICE_SOURCE is already 'fixed'
-(explicit mode) or MAZAPAY_ALLOW_FIXED_PRICE is enabled — and the resulting
-quotes are labeled rate_source='fixed-fallback' so the store, audit trail,
-and MIP export rows reveal exactly which quotes were priced synthetically.
+Fallback policy (auditable, not silent): if a live source fails, the other
+configured live source is tried before anything synthetic (2026-11-15 live
+finding: paprika 403s datacenter-hosted bridges, UA-independent; CoinLore
+carried the live E2E quote). The synthetic fixed price is used ONLY when
+PRICE_SOURCE is already 'fixed' (explicit mode) or MAZAPAY_ALLOW_FIXED_PRICE
+is enabled — and the resulting quotes are labeled rate_source='fixed-fallback'
+so the store, audit trail, and MIP export rows reveal exactly which quotes
+were priced synthetically. The quote label always names the live source that
+actually served (paprika or lore), and per-source feed status is exposed via
+pricing.feed_health() (surfaced on GET /health).
 Every order carries its own rate + rate source for the audit trail and the
 MIP FX columns (IRS Notice 2014-21 / ASU 2023-08 treatment).
 """
 import json
+import time
 import urllib.request
 from decimal import Decimal, DecimalException, InvalidOperation, ROUND_DOWN
 from typing import Optional, Tuple
@@ -92,26 +98,97 @@ _SOURCES = {
 }
 
 
-def get_maza_usd() -> Tuple[Decimal, str]:
-    """Return (price_usd, source), trying sources in configured order.
+_LIVE_SOURCES = ("paprika", "lore")
 
-    A failed primary source falls back to the synthetic fixed price only
-    when the mode is auditable (explicit 'fixed' source, or the operator
-    enabled MAZAPAY_ALLOW_FIXED_PRICE). Otherwise this raises so no
-    real-wallet quote is ever priced from a stale synthetic rate silently.
+# Passive per-source feed state, recorded by real quote attempts only —
+# /health never probes the network. Values JSON-safe: ok True/False/None
+# (None = never attempted), error capped so a hostile body cannot balloon it.
+_FEED_STATE: dict = {}
+
+_FEED_NEVER: dict = {"ok": None, "error": None, "last_attempt_ts": None, "last_ok_ts": None}
+
+
+def _record_feed_attempt(name: str, ok: bool, error=None) -> None:
+    state = dict(_FEED_NEVER)
+    state.update(_FEED_STATE.get(name) or {})
+    state["last_attempt_ts"] = time.time()
+    if ok:
+        state["ok"] = True
+        state["error"] = None
+        state["last_ok_ts"] = state["last_attempt_ts"]
+    else:
+        state["ok"] = False
+        state["error"] = (str(error)[:200] if error is not None else "failed")
+    _FEED_STATE[name] = state
+
+
+def _live_failover_order(primary: str) -> list:
+    """Live sources to try, configured primary first, then the other live
+    source if configured. Explicit 'fixed' mode probes nothing: it returns
+    without any network attempt, so its behavior is fully deterministic."""
+    if primary == "fixed":
+        return []
+    order = [primary]
+    for name in _LIVE_SOURCES:
+        if name == primary:
+            continue
+        if name == "lore" and not config.LORE_TICKER_URL:
+            continue  # failover source not configured
+        order.append(name)
+    return order
+
+
+def feed_health() -> dict:
+    """Per-source feed status for GET /health — passive, instant, no I/O.
+
+    State comes exclusively from real quote attempts (get_maza_usd), so the
+    report reflects what the bridge actually experienced, not a probe-time
+    snapshot that could differ from quoting time.
+    """
+    primary = config.PRICE_SOURCE
+    return {
+        "primary": primary,
+        "failover_order": _live_failover_order(primary),
+        "sources": {
+            name: dict(_FEED_STATE.get(name) or _FEED_NEVER)
+            for name in _LIVE_SOURCES
+        },
+    }
+
+
+def get_maza_usd() -> Tuple[Decimal, str]:
+    """Return (price_usd, source), trying live sources in failover order.
+
+    The configured primary is tried first; if it fails, the other configured
+    live source is tried before anything synthetic is considered (2026-11-15
+    live finding: paprika 403s datacenter-hosted bridges, UA-independent;
+    CoinLore carried the live E2E quote). The returned label names the source
+    that actually served, so the audit trail stays honest. The synthetic
+    fixed price is used only when the mode is auditable (explicit 'fixed'
+    source, or the operator enabled MAZAPAY_ALLOW_FIXED_PRICE) and labeled
+    'fixed-fallback'. Otherwise this raises so no real-wallet quote is ever
+    priced from a stale synthetic rate silently.
     """
     primary = config.PRICE_SOURCE
     if primary not in _SOURCES:
         raise PriceUnavailable(f"unknown PRICE_SOURCE {primary!r}")
-    try:
-        return _SOURCES[primary]()
-    except (PriceUnavailable, OSError, ValueError, json.JSONDecodeError) as exc:
-        if primary == "fixed":
-            return _price_fixed()  # explicit fixed mode; re-raises if unconfigured
-        if config.ALLOW_FIXED_PRICE:
-            price, _src = _price_fixed()
-            return price, "fixed-fallback"  # auditable synthetic-rate label
-        raise PriceUnavailable(f"price source {primary!r} failed: {exc}") from exc
+    if primary == "fixed":
+        return _price_fixed()  # explicit fixed mode; re-raises if unconfigured
+    errors = []
+    for name in _live_failover_order(primary):
+        try:
+            price, source = _SOURCES[name]()
+            _record_feed_attempt(name, True)
+            return price, source
+        except (PriceUnavailable, OSError, ValueError, json.JSONDecodeError) as exc:
+            _record_feed_attempt(name, False, exc)
+            errors.append(f"{name}: {exc}")
+    if config.ALLOW_FIXED_PRICE:
+        price, _src = _price_fixed()
+        return price, "fixed-fallback"  # auditable synthetic-rate label
+    raise PriceUnavailable(
+        "all live price sources failed (" + "; ".join(errors) + ")"
+    )
 
 
 def quote_maza(usd_amount, price: Optional[Decimal] = None) -> Tuple[Decimal, Decimal, str]:

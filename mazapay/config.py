@@ -21,7 +21,13 @@ PRICE_SOURCE = os.environ.get("MAZAPAY_PRICE_SOURCE", "paprika")  # paprika|lore
 PAPRIKA_TICKER_URL = os.environ.get(
     "MAZAPAY_PAPRIKA_URL", "https://api.coinpaprika.com/v1/tickers/maza-maza"
 )
-LORE_TICKER_URL = os.environ.get("MAZAPAY_LORE_URL", "")
+# Automatic live failover source. CoinLore MAZA id 184745 verified live
+# 2026-11-15 (it carried the first real E2E quote when paprika 403'd from a
+# datacenter host, UA-independent). Set MAZAPAY_LORE_URL="" to disable the
+# failover source; the primary source default is unchanged (paprika).
+LORE_TICKER_URL = os.environ.get(
+    "MAZAPAY_LORE_URL", "https://api.coinlore.net/api/ticker/?id=184745"
+)
 FIXED_USD_PRICE = _float("MAZAPAY_FIXED_USD_PRICE", 0.002)
 PRICE_TIMEOUT_SECONDS = _int("MAZAPAY_PRICE_TIMEOUT", 8)
 # Auditable operating mode: when the primary live price source fails, fall

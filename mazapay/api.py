@@ -808,6 +808,7 @@ class Handler(BaseHTTPRequestHandler):
                 "auth_mode": "token" if config.API_TOKEN else "open",
                 "confirmations_required": config.CONFIRMATIONS_REQUIRED,
                 "price_source": config.PRICE_SOURCE,
+                "price_feed": pricing.feed_health(),
                 "allow_fixed_price": config.ALLOW_FIXED_PRICE,
                 "rate_lock_seconds": config.RATE_LOCK_SECONDS,
             },
