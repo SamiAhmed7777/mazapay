@@ -219,7 +219,7 @@ need_bin() {
     done
 }
 need_bin python3 sha256sum install cp mv ln rm ss dig caddy systemctl getent date mktemp curl seq tr \
-    find xargs grep sort diff awk sed cut wc useradd kill
+    find xargs grep sort diff awk sed cut wc useradd kill mkdir
 
 [ "$(id -u)" -eq 0 ] || fail 3 "must run as root"
 
@@ -581,6 +581,20 @@ EOF
 # log root-owned 0600 and the later in-service reload (user caddy) then fails
 # with permission denied (found live 2026-11-15). Pre-create it owned like the
 # log dir so both validate and the service open the same caddy-owned file.
+# Fresh hosts may lack the log dir entirely — create it and hand it to the
+# caddy user (best effort: a host without the caddy user manages its own
+# logging layout and gets a loud WARN instead of a silent root-owned file).
+if [ ! -d "$LOG_DIR" ]; then
+    mkdir -p "$LOG_DIR" || fail 2 "log dir creation failed: $LOG_DIR"
+    if getent passwd caddy >/dev/null 2>&1; then
+        chown caddy:caddy "$LOG_DIR" 2>/dev/null || chown caddy "$LOG_DIR" 2>/dev/null || true
+        chmod 750 "$LOG_DIR" 2>/dev/null || true
+        log "caddy: log dir created ($LOG_DIR, owner caddy)"
+    else
+        chmod 755 "$LOG_DIR" 2>/dev/null || true
+        warn "log dir created but no caddy user on this host — file ownership will follow the dir (root)"
+    fi
+fi
 if [ -d "$LOG_DIR" ]; then
     [ -e "$LOG_PATH" ] || touch "$LOG_PATH"
     chown --reference="$LOG_DIR" "$LOG_PATH" 2>/dev/null || true

@@ -32,7 +32,12 @@ ExecStart=/usr/bin/python3 -m mazapay.api
 Restart=always
 RestartSec=3
 # POST /payments spends from the wallet — run as its own user, no shell,
-# no capabilities, no kernel/control-group surface.
+# no capabilities, no kernel/control-group surface, and (post-first-boot
+# tightening) a syscall allowlist: @system-service covers CPython + sqlite3
+# + urllib (epoll/futex/file I/O, AF_INET/AF_UNIX sockets, clone for
+# threads); blocked syscalls return EPERM (SystemCallErrorNumber) so an
+# unforeseen python need surfaces as a clean OSError, not an opaque SIGSYS
+# kill. MemoryDenyWriteExecute is safe here: pure CPython, no JIT.
 NoNewPrivileges=true
 ProtectSystem=strict
 PrivateTmp=true
@@ -47,6 +52,21 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 CapabilityBoundingSet=
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# Seccomp tier (declared residual of the 132870e deploy, tightened after
+# first live boot verified 2026-11-15; live-proven via a throwaway
+# mazapay-seccomp-test.service before rollout):
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=true
+LockPersonality=true
+RestrictRealtime=true
+PrivateDevices=true
+ProtectKernelLogs=true
+ProtectHostname=true
+RemoveIPC=true
+KeyringMode=private
 
 [Install]
 WantedBy=multi-user.target

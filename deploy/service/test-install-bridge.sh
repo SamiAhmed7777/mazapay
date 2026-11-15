@@ -167,6 +167,20 @@ iport="$(grep -oE '^LISTEN_PORT="[0-9]+"' "$INSTALLER" | tr -d '"' | cut -d= -f2
 eq() { [ "$1" = "$2" ] && [ -n "$1" ]; }
 ck "unit MAZAPAY_PORT ($uport) == installer LISTEN_PORT ($iport), both nonempty" eq "$uport" "$iport"
 
+# Hardening tier: every directive below must stay in the repo unit — a future
+# edit that silently drops one fails the battery here, before any scenario.
+for d in NoNewPrivileges=true ProtectSystem=strict PrivateTmp=true ProtectHome=true \
+         "ReadWritePaths=/var/lib/mazapay" UMask=0077 ProtectClock=true \
+         RestrictNamespaces=true ProtectKernelTunables=true ProtectKernelModules=true \
+         ProtectControlGroups=true RestrictSUIDSGID=true "CapabilityBoundingSet=" \
+         "RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK" \
+         "SystemCallFilter=@system-service" SystemCallErrorNumber=EPERM \
+         SystemCallArchitectures=native MemoryDenyWriteExecute=true \
+         LockPersonality=true RestrictRealtime=true PrivateDevices=true \
+         ProtectKernelLogs=true ProtectHostname=true RemoveIPC=true KeyringMode=private; do
+    ck "repo unit hardening: $d" grep -qF -- "$d" "$REAL_UNIT"
+done
+
 echo "== S1: fresh install, happy path"
 sbx="$(new_sbx s1)"
 rc="$(run_install "$sbx")"
@@ -193,6 +207,11 @@ ck "original caddy site kept" file_has "$sbx/etc/caddy/Caddyfile" "sbxsites.exam
 ck "user shim ran" [ -f "$sbx/user_added" ]
 ck "service started" grep -q "systemctl start mazapay.service" "$sbx/logs/systemctl.log"
 ck "health returned 200+ok" file_has "$sbx/logs/run.log" "health OK"
+UNIT_INSTALLED="$sbx/etc/systemd/system/mazapay.service"
+ck "installed unit: seccomp allowlist" file_has "$UNIT_INSTALLED" "SystemCallFilter=@system-service"
+ck "installed unit: blocked syscall returns EPERM" file_has "$UNIT_INSTALLED" "SystemCallErrorNumber=EPERM"
+ck "installed unit: native call architectures only" file_has "$UNIT_INSTALLED" "SystemCallArchitectures=native"
+ck "installed unit: W^X enforced" file_has "$UNIT_INSTALLED" "MemoryDenyWriteExecute=true"
 leak_check "$sbx"
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
@@ -360,6 +379,37 @@ rc="$(run_install "$sbx")"
 ck "exit 0 without guard" rc_is "$rc" 0
 ck "skip line logged" file_has "$sbx/logs/run.log" "caddy-guard not present on this host"
 ck "vhost block still installed" file_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge managed block"
+leak_check "$sbx"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S12: installed vhost block byte-identical to guard registration"
+sbx="$(new_sbx s12)"
+rc="$(run_install "$sbx")"
+ck "exit 0" rc_is "$rc" 0
+python3 - "$sbx/etc/caddy/Caddyfile" "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" <<'PY'
+import re, sys
+caddy = open(sys.argv[1]).read()
+guard = open(sys.argv[2]).read()
+m = re.search(r"# BEGIN mazapay-bridge managed block.*?\n(.*?)# END mazapay-bridge managed block", caddy, re.S)
+if not m:
+    sys.exit(1)
+block = m.group(1).rstrip("\n")
+chunks = [c.strip() for c in guard.split("\n\n") if c.strip()]
+ours = [c for c in chunks if c.splitlines()[0].startswith("sandbox.mazapay.invalid")]
+sys.exit(0 if (len(ours) == 1 and ours[0] == block) else 1)
+PY
+ck "guard block == installed block (byte-exact, tabs + directives)" rc_is "$?" 0
+leak_check "$sbx"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S13: fresh host — missing caddy log dir is created, deploy proceeds"
+sbx="$(new_sbx s13)"
+rm -rf "$sbx/var/log/caddy"
+rc="$(run_install "$sbx")"
+ck "exit 0" rc_is "$rc" 0
+ck "log dir created" [ -d "$sbx/var/log/caddy" ]
+ck "access log pre-created" [ -f "$sbx/var/log/caddy/sandbox.mazapay.invalid.access.log" ]
+ck "creation reported on transcript" grep -qE "log dir created|access log pre-created" "$sbx/logs/run.log"
 leak_check "$sbx"
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
