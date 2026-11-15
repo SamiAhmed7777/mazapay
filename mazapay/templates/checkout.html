@@ -3,79 +3,472 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pay with MAZA</title>
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0d12">
+<title>Pay with MAZA · MazaPay checkout</title>
+<link rel="icon" type="image/png" href="/static/mazacoin-180.png">
+<link rel="apple-touch-icon" href="/static/mazacoin-180.png">
 <style>
-  :root { --bg:#0e1116; --card:#171c24; --text:#e8eaf0; --muted:#8b93a3; --accent:#f5b400; --ok:#3fb96f; }
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-         background: var(--bg); color: var(--text); display:flex; justify-content:center; padding: 2rem 1rem; }
-  .card { background: var(--card); border-radius: 14px; padding: 2rem; width: 100%; max-width: 460px;
-          box-shadow: 0 8px 30px rgba(0,0,0,.4); }
-  h1 { margin: 0 0 .25rem; font-size: 1.5rem; }
-  .sub { color: var(--muted); margin: 0 0 1.5rem; font-size: .95rem; }
-  label { display:block; font-size:.85rem; color: var(--muted); margin-bottom:.35rem; }
-  .row { display:flex; gap:.5rem; }
-  input[type=number] { flex:1; background:#0b0e13; border:1px solid #2a3140; color:var(--text);
-        border-radius:8px; padding:.75rem 1rem; font-size:1.05rem; }
-  button { background: var(--accent); color:#111; border:none; border-radius:8px; padding:.75rem 1.2rem;
-           font-weight:700; cursor:pointer; font-size:1rem; }
-  button:disabled { opacity:.5; cursor:default; }
-  .quote { display:none; margin-top:1.5rem; }
-  .amount { font-size: 2rem; font-weight: 800; color: var(--accent); }
-  .unit { font-size: 1rem; color: var(--muted); }
-  .addr { background:#0b0e13; border:1px solid #2a3140; border-radius:8px; padding:.7rem .9rem;
-          font-family: ui-monospace, monospace; font-size:.85rem; word-break: break-all; color:#c9d1e0; }
-  .meta { color: var(--muted); font-size:.85rem; margin-top:.5rem; }
-  .status { margin-top:1rem; padding:.7rem 1rem; border-radius:8px; background:#0b0e13;
-            border:1px solid #2a3140; font-size:.95rem; }
-  .status.paid { border-color: var(--ok); color: var(--ok); font-weight:700; }
-  .banner { display:none; margin:-.5rem 0 1.25rem; padding:.55rem .9rem; border-radius:8px;
-            background:#3a2b00; color:var(--accent); font-size:.85rem; }
-  .fine { color: var(--muted); font-size:.78rem; margin-top:1.5rem; line-height:1.5; }
+  /* MazaCoin brand palette, taken from the official artwork:
+     amber #f0a000 (dominant), red #f00000 (Z + errors), silver-white,
+     yellow #f0f000 (quadrant accent), black. Red is a graphic accent only:
+     at 3.88:1 on the card surface red text fails WCAG AA, so error COPY
+     uses --red-text (6.99:1) and pure red is reserved for fills that carry
+     no text. Every text/background pair below is measured, see
+     tests/test_checkout_ui.py (contrast matrix, 4.5:1 floor). */
+  :root {
+    --bg:#0b0d12;
+    --surface:#151b24;
+    --surface-2:#0d1117;
+    --line:#242c39;
+    --line-strong:#5f6d8c;  /* 3.65:1 on --surface-2 / 3.34:1 on --surface: WCAG 1.4.11 field boundary */
+    --text:#eef1f6;
+    --muted:#9aa4b6;
+    --amber:#f0a000;
+    --amber-soft:#ffc45c;
+    --ink:#101318;
+    --red:#f00000;
+    --red-text:#ff7d7d;
+    --ok:#4ecb8a;
+    --radius:18px;
+  }
+  * { box-sizing:border-box; }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background:var(--bg);
+    color:var(--text);
+    min-height:100vh;
+    padding:20px 16px 32px;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    gap:18px;
+  }
+  /* Brand glow: pure CSS, no external bytes (CSP default-src 'none'). */
+  body::before {
+    content:"";
+    position:fixed;
+    inset:0 0 auto 0;
+    height:340px;
+    background:radial-gradient(620px 250px at 50% -80px, rgba(240,160,0,.17), rgba(240,160,0,0) 72%);
+    pointer-events:none;
+    z-index:0;
+  }
+  .shell, .masthead, .card, .fine { position:relative; z-index:1; }
+  .shell { width:100%; max-width:520px; display:flex; flex-direction:column; gap:14px; }
+
+  /* ---- masthead: official wordmark on a light plate (the black A's of the
+     wordmark need a bright ground on a dark page) + coin roundel ---- */
+  .masthead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .wordplate {
+    display:inline-flex; align-items:center;
+    background:#f4f6f9;
+    border-radius:11px;
+    padding:7px 11px;
+    box-shadow:0 6px 18px -10px rgba(0,0,0,.9), inset 0 0 0 1px rgba(255,255,255,.6);
+  }
+  .wordplate img { display:block; height:26px; width:auto; }
+  .masthead .coin { width:26px; height:26px; border-radius:50%; display:block; }
+  .eyebrow {
+    margin:0 0 7px; font-size:.68rem; font-weight:700;
+    letter-spacing:.16em; text-transform:uppercase; color:var(--muted);
+  }
+
+  /* ---- card ---- */
+  .card {
+    background:linear-gradient(180deg, #19202a 0%, var(--surface) 42%, #141a23 100%);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:22px 20px 24px;
+    box-shadow:0 30px 70px -34px rgba(0,0,0,.95), inset 0 1px 0 rgba(255,255,255,.045);
+  }
+  .chip {
+    display:none; align-items:center; gap:6px;
+    font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--muted);
+    border:1px solid var(--line);
+    background:var(--surface-2);
+    border-radius:999px;
+    padding:4px 9px;
+    margin:0 0 14px;
+  }
+  .chip::before {
+    content:""; width:6px; height:6px; border-radius:50%;
+    background:var(--amber); opacity:.75;
+  }
+
+  h1 { margin:0 0 6px; font-size:1.5rem; line-height:1.2; letter-spacing:-.01em; }
+  .lede { margin:0 0 20px; color:var(--muted); font-size:.94rem; line-height:1.55; }
+
+  label { display:block; font-size:.72rem; letter-spacing:.11em; text-transform:uppercase;
+          color:var(--muted); margin:0 0 8px; font-weight:600; }
+  .field { position:relative; margin:0 0 14px; }
+  .field .prefix {
+    position:absolute; left:15px; top:50%; transform:translateY(-50%);
+    color:var(--muted); font-size:1.15rem; font-weight:600; pointer-events:none;
+  }
+  input[type=number] {
+    width:100%; height:60px;
+    background:var(--surface-2);
+    border:1px solid var(--line-strong);
+    border-radius:12px;
+    color:var(--text);
+    padding:0 15px 0 34px;
+    font:inherit; font-size:1.4rem; font-weight:700;
+    font-variant-numeric:tabular-nums;
+    transition:border-color .15s ease, box-shadow .15s ease;
+  }
+  input[type=number]::placeholder { color:#7b879c; font-weight:600; }  /* 5.22:1 on --surface-2 */
+  input[type=number]:focus {
+    outline:none; border-color:var(--amber);
+    box-shadow:0 0 0 3px rgba(240,160,0,.18);
+  }
+
+  .btn {
+    display:inline-flex; align-items:center; justify-content:center; gap:8px;
+    width:100%; min-height:52px;
+    border-radius:12px; border:1px solid transparent;
+    font:inherit; font-size:1rem; font-weight:700; letter-spacing:.01em;
+    cursor:pointer;
+    transition:transform .12s ease, box-shadow .15s ease, background .15s ease, border-color .15s ease;
+  }
+  .btn:focus-visible { outline:2px solid var(--amber); outline-offset:2px; }
+  .btn.primary {
+    background:linear-gradient(180deg, var(--amber-soft) 0%, var(--amber) 62%);
+    color:var(--ink);
+    box-shadow:0 12px 24px -18px rgba(240,160,0,.55);
+  }
+  .btn.primary:hover { transform:translateY(-1px); box-shadow:0 16px 28px -18px rgba(240,160,0,.7); }
+  .btn.primary:active { transform:translateY(0); }
+  .btn.primary:disabled { opacity:.55; cursor:default; transform:none; box-shadow:none; }
+  .btn.ghost {
+    background:transparent; border-color:var(--line-strong); color:var(--text);
+    min-height:46px; font-size:.92rem; font-weight:600;
+  }
+  .btn.ghost:hover { border-color:var(--amber); color:var(--amber-soft); }
+
+  .err { min-height:1.25em; margin:10px 0 0; color:var(--red-text); font-size:.86rem; line-height:1.4; }
+
+  /* ---- quote ---- */
+  .quote { display:none; }
+  .steps {
+    list-style:none; margin:0 0 14px; padding:0;
+    display:grid; grid-template-columns:repeat(4, 1fr);
+    counter-reset:step;
+  }
+  .steps li {
+    position:relative;
+    display:flex; flex-direction:column; align-items:center; gap:7px;
+    text-align:center;
+    font-size:.68rem; line-height:1.3;
+    color:var(--muted);
+    padding:0 2px;
+  }
+  .steps li::before {
+    content:""; position:absolute; top:10px; height:2px; border-radius:2px;
+    left:calc(-50% + 14px); right:calc(50% + 14px);
+    background:var(--line);
+  }
+  .steps li:first-child::before { display:none; }
+  .steps li.is-done::before, .steps li.is-active::before { background:var(--amber); }
+  .steps .node {
+    width:22px; height:22px; border-radius:50%;
+    display:grid; place-items:center;
+    border:2px solid var(--line-strong);
+    background:var(--surface);
+    font-size:.62rem; font-weight:700;
+    color:var(--muted);
+    transition:background .2s ease, border-color .2s ease, color .2s ease, box-shadow .2s ease;
+  }
+  .steps li.is-done .node { background:var(--amber); border-color:var(--amber); color:var(--ink); font-size:.7rem; }
+  .steps li.is-active .node {
+    border-color:var(--amber); color:var(--amber-soft);
+    box-shadow:0 0 0 4px rgba(240,160,0,.16);
+    animation:breathe 2.4s ease-in-out infinite;
+  }
+  .steps li.is-active, .steps li.is-done { color:var(--text); font-weight:600; }
+
+  .hero { text-align:center; margin:8px 0 6px; }
+  .hero-amount {
+    display:flex; align-items:baseline; justify-content:center; gap:10px;
+    flex-wrap:wrap;
+  }
+  #maza {
+    font-size:clamp(2.35rem, 12.5vw, 3.4rem);
+    font-weight:800; letter-spacing:-.02em; line-height:1.05;
+    color:var(--amber-soft);
+    font-variant-numeric:tabular-nums;
+    word-break:break-word;
+  }
+  .hero-unit { font-size:.76rem; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:700; }
+  .hero-sub { margin:9px 0 0; color:var(--muted); font-size:.86rem; line-height:1.5; }
+  .hero-sub strong { color:var(--text); font-weight:700; }
+  .ttl {
+    display:inline-flex; align-items:center; gap:6px;
+    color:var(--amber-soft); font-weight:700; font-variant-numeric:tabular-nums;
+    background:rgba(240,160,0,.12); border:1px solid rgba(240,160,0,.4);
+    border-radius:999px; padding:1px 8px 1px 7px; font-size:.82rem;
+  }
+  .ttl::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--amber); }
+
+  /* ---- QR tile ---- */
+  .qr-tile {
+    margin:12px 0 12px; padding:16px 14px 13px;
+    background:var(--surface-2);
+    border:1px solid var(--line);
+    border-radius:14px;
+    text-align:center;
+  }
+  .qr-frame {
+    display:inline-block; padding:9px;
+    background:#fff; border-radius:12px;
+    box-shadow:0 14px 30px -20px rgba(0,0,0,.95);
+    line-height:0;
+  }
+  #qr-box { margin:0 auto; }
+  #qr { display:block; width:184px; height:184px; image-rendering:pixelated; border-radius:2px; }
+  .qr-missing { display:none; }
+  .qr-missing.show { display:block; }
+  #qr-missing-text { color:var(--muted); font-size:.85rem; line-height:1.5; max-width:210px; }
+  .qr-cap {
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    margin:12px 0 0; font-size:.86rem; color:var(--text); font-weight:600;
+  }
+  .qr-cap img { width:16px; height:16px; display:block; border-radius:50%; }
+
+  .rate-line {
+    margin:0 0 12px; text-align:center;
+    font-size:.8rem; color:var(--muted); line-height:1.5;
+  }
+  .rate-line > span { display:block; }
+  .rate-line .rate-src { font-size:.74rem; margin-top:2px; }
+  .rate-line .mono { color:var(--text); font-weight:600; }
+
+  .addr-label {
+    display:block; font-size:.72rem; letter-spacing:.11em; text-transform:uppercase;
+    color:var(--muted); font-weight:600; margin:0 0 8px;
+  }
+  .addr {
+    font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size:.8rem; line-height:1.5;
+    overflow-wrap:anywhere; word-break:break-word;
+    color:#d3dae8;
+    background:var(--surface-2);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:12px 13px;
+    margin:0 0 10px;
+  }
+  .mono { font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+
+  .status {
+    display:flex; align-items:center; gap:9px;
+    margin:0 0 4px; padding:11px 13px;
+    background:var(--surface-2); border:1px solid var(--line); border-radius:11px;
+    font-size:.85rem; color:var(--muted); line-height:1.45;
+  }
+  .status::before {
+    content:""; flex:0 0 auto; width:8px; height:8px; border-radius:50%;
+    background:var(--amber); animation:breathe 1.6s ease-in-out infinite;
+  }
+  .status.paid { color:var(--ok); border-color:rgba(78,203,138,.45); font-weight:600; }
+  .status.paid::before { background:var(--ok); animation:none; }
+  .status.warn { color:var(--amber-soft); border-color:rgba(240,160,0,.45); }
+  .status.warn::before { background:var(--amber); animation:none; }
+
+  .quote.is-closed .qr-tile, .quote.is-closed .addr-block, .quote.is-closed .rate-line { display:none; }
+
+  /* ---- receipt ---- */
+  .receipt, .expired { display:none; margin:20px 0 0; padding:20px 15px 16px;
+    background:var(--surface-2); border:1px solid var(--line); border-radius:14px; }
+  .receipt[hidden], .expired[hidden] { display:none; }
+  .receipt:not([hidden]), .expired:not([hidden]) { display:block; }
+  .seal {
+    width:54px; height:54px; border-radius:50%;
+    display:grid; place-items:center; margin:0 auto 12px;
+    background:rgba(78,203,138,.12); border:1.5px solid rgba(78,203,138,.65);
+    color:var(--ok); font-size:1.5rem; font-weight:800; line-height:1;
+  }
+  .receipt h2, .expired h2 { margin:0 0 4px; font-size:1.16rem; text-align:center; letter-spacing:-.01em; }
+  .receipt-sub, .expired p { margin:0 0 16px; text-align:center; color:var(--muted); font-size:.85rem; line-height:1.5; }
+  .expired h2 { color:var(--red-text); }
+  .receipt-rows { margin:0; padding:0; }
+  .rrow {
+    display:flex; align-items:baseline; justify-content:space-between; gap:14px;
+    padding:9px 0; border-top:1px solid var(--line);
+  }
+  .rrow:first-child { border-top:none; }
+  .rrow dt { margin:0; color:var(--muted); font-size:.8rem; }
+  .rrow dd { margin:0; text-align:right; font-size:.86rem; font-weight:600; color:var(--text);
+             font-variant-numeric:tabular-nums; word-break:break-word; }
+  .rrow dd.mono { font-size:.79rem; font-weight:500; color:#d3dae8; }
+  .receipt-hint { margin:14px 0 0; text-align:center; color:var(--muted); font-size:.76rem; }
+  /* very narrow phones: stack the receipt rows instead of squeezing a
+     two-column table until the values wrap mid-glyph */
+  @media (max-width:379px) {
+    .rrow { flex-direction:column; align-items:flex-start; gap:2px; }
+    .rrow dd { text-align:left; }
+  }
+  .expired .btn { margin-top:4px; }
+
+  /* ---- footer ---- */
+  .fine { width:100%; max-width:520px; text-align:center; color:var(--muted); font-size:.8rem; line-height:1.65; }
+  .fine p { max-width:400px; margin:0 auto; }
+  .fine .tagline { margin:0 auto 6px; color:var(--text); font-size:.84rem; font-weight:600; letter-spacing:.01em; }
+  .fine .tagline .dot { color:var(--amber); }
+
+  @keyframes breathe { 0%,100% { opacity:1; } 50% { opacity:.35; } }
+  /* tall viewports: centre the composition instead of leaving a void below */
+  @media (min-height:740px) {
+    body { justify-content:center; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation:none !important; transition:none !important; }
+  }
+  @media (min-width:900px) {
+    .shell, .fine { max-width:560px; }
+    .card { padding:32px 32px 32px; }
+  }
+  @media (min-width:640px) {
+    body { padding:44px 20px 40px; }
+    .card { padding:30px 28px 30px; }
+    .wordplate img { height:30px; }
+    .lede { font-size:.97rem; }
+    #qr { width:208px; height:208px; }
+  }
 </style>
 </head>
 <body>
-<div class="card">
-  <h1>Pay with MAZA</h1>
-  <p class="sub">MazaCoin payments, settled in USD on the books.</p>
-  <div id="mock-banner" class="banner">Demo mode (mock chain) — no real MAZA moves.</div>
-
-  <div id="form-view">
-    <label for="usd">Amount (USD)</label>
-    <div class="row">
-      <input id="usd" type="number" min="0.01" step="0.01" placeholder="25.00">
-      <button id="go" onclick="createOrder()">Quote</button>
-    </div>
-    <p id="err" class="meta" style="color:#e26d5a"></p>
+<main class="shell">
+  <div class="masthead">
+    <span class="wordplate">
+      <img src="/static/mazacoin-wordmark.png" alt="MazaCoin" width="86" height="26">
+    </span>
+    <img class="coin" src="/static/mazacoin-64.png" alt="" width="26" height="26">
   </div>
 
-  <div id="quote" class="quote">
-    <div><span class="amount" id="maza">—</span> <span class="unit">MAZA</span></div>
-    <p class="meta">Locked rate: <span id="rate">—</span> USD/MAZA (<span id="src">—</span>) · expires in <span id="ttl">—</span></p>
-    <div id="qr-box" style="display:none;margin:.9rem auto;background:#fff;padding:.5rem;border-radius:8px;width:max-content">
-      <img id="qr" alt="QR code of the payment address" width="180" height="180" style="display:block;image-rendering:pixelated">
-    </div>
-    <label>Send exactly this amount to</label>
-    <div class="addr" id="addr">—</div>
-    <div class="row" style="margin-top:.5rem">
-      <button onclick="copyAddr(this)" style="flex:1">Copy address</button>
-    </div>
-    <div class="status" id="status">Waiting for payment…</div>
+  <div class="card">
+    <div class="chip" id="mock-banner">Demo mode · mock chain</div>
+
+    <section id="form-view">
+      <p class="eyebrow">MazaPay checkout</p>
+      <h1>Pay with MAZA</h1>
+      <p class="lede">Enter what you owe. We lock a MAZA rate for you and watch the chain — no wallet, no account, nothing to install.</p>
+      <label for="usd">Amount due (USD)</label>
+      <div class="field">
+        <span class="prefix" aria-hidden="true">$</span>
+        <input id="usd" type="number" inputmode="decimal" min="0.01" step="0.01"
+               placeholder="25.00" autocomplete="off">
+      </div>
+      <button class="btn primary" id="go" onclick="createOrder()">Lock quote</button>
+      <p class="err" id="err" role="alert"></p>
+    </section>
+
+    <section class="quote" id="quote">
+      <ol class="steps" id="steps" aria-label="Payment progress">
+        <li id="step-quote" data-n="1" class="is-active"><span class="node" aria-hidden="true">1</span><span>Quote locked</span></li>
+        <li id="step-seen" data-n="2"><span class="node" aria-hidden="true">2</span><span>Payment seen</span></li>
+        <li id="step-conf" data-n="3"><span class="node" aria-hidden="true">3</span><span>Confirmed</span></li>
+        <li id="step-receipt" data-n="4"><span class="node" aria-hidden="true">4</span><span>Receipt</span></li>
+      </ol>
+
+      <div class="hero">
+        <div class="hero-amount"><span id="maza">—</span><span class="hero-unit">MAZA</span></div>
+        <p class="hero-sub">for <strong id="usd-due">—</strong> <span id="hero-hold">· rate held <span class="ttl" id="ttl">—</span></span><span id="hero-state" hidden>· paid</span></p>
+      </div>
+
+      <p class="rate-line">
+        <span>Locked rate <span class="mono" id="rate">—</span> USD/MAZA</span>
+        <span class="rate-src">Source: <span id="src">—</span></span>
+      </p>
+
+      <p class="status" id="status" role="status" aria-live="polite">Watching the chain for your payment…</p>
+
+      <div class="qr-tile">
+        <div class="qr-frame">
+          <div id="qr-box" style="display:none;margin:0 auto">
+            <img id="qr" alt="QR code of the payment address" width="184" height="184">
+          </div>
+          <div class="qr-missing" id="qr-missing">
+            <p id="qr-missing-text" style="margin:0">QR unavailable — copy the address below and paste it into your wallet.</p>
+          </div>
+        </div>
+        <p class="qr-cap"><img src="/static/mazacoin-64.png" alt="" width="16" height="16"> Scan with your MazaCoin wallet</p>
+      </div>
+
+      <div class="addr-block">
+        <span class="addr-label">Send exactly this amount to</span>
+        <div class="addr" id="addr">—</div>
+        <button class="btn ghost" onclick="copyAddr(this)">Copy address</button>
+      </div>
+    </section>
+
+    <section class="receipt" id="receipt" hidden>
+      <div class="seal" aria-hidden="true">✓</div>
+      <h2>Your receipt</h2>
+      <p class="receipt-sub">Credited at your locked rate.</p>
+      <dl class="receipt-rows">
+        <div class="rrow"><dt>Amount</dt><dd id="r-usd">—</dd></div>
+        <div class="rrow"><dt>MAZA received</dt><dd id="r-maza">—</dd></div>
+        <div class="rrow"><dt>Locked rate</dt><dd id="r-rate">—</dd></div>
+        <div class="rrow"><dt>Rate source</dt><dd id="r-src">—</dd></div>
+        <div class="rrow"><dt>Confirmations</dt><dd id="r-conf">—</dd></div>
+        <div class="rrow"><dt>Transaction</dt><dd id="r-tx" class="mono">—</dd></div>
+        <div class="rrow"><dt>Time</dt><dd id="r-time">—</dd></div>
+        <div class="rrow"><dt>Order</dt><dd id="r-order" class="mono">—</dd></div>
+      </dl>
+      <p class="receipt-hint">Screenshot this panel for your records.</p>
+    </section>
+
+    <section class="expired" id="expired" hidden>
+      <h2 id="expired-title">This quote expired</h2>
+      <p id="expired-text">The rate is only held for a short window. Create a new quote to get a fresh one.</p>
+      <button class="btn primary" onclick="location.reload()">Start a new payment</button>
+    </section>
   </div>
 
-  <p class="fine">
-    Payments are watched on-chain and credited after
-    <span id="conf">6</span> confirmations. Your receipt records the exact
-    USD value at the locked rate for accounting.
-  </p>
-</div>
+  <footer class="fine">
+    <p class="tagline">Powered by MazaCoin <span class="dot">·</span> settled in USD on the books</p>
+    <p>Payments are watched on-chain and credited after <span id="conf">6</span> confirmations. Your receipt records the exact USD value at the locked rate.</p>
+  </footer>
+</main>
 <script>
 const $ = (id) => document.getElementById(id);
 let orderId = null, expiresAt = null, timer = null, poller = null;
+let sawSeen = false, finished = false;
+
+function fmtMaza(v) {
+  return Number(v).toLocaleString(undefined, { maximumFractionDigits: 8 });
+}
+function fmtUsd(v) {
+  return '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function shortTx(txid) {
+  return txid ? txid.slice(0, 10) + '…' + txid.slice(-6) : '—';
+}
+// The API reports the feed that actually served the quote; show a human name
+// and fall back to the raw label rather than inventing one.
+function rateLabel(src) {
+  const names = { paprika: 'CoinPaprika', lore: 'CoinLore', fixed: 'Fixed quote', 'fixed-fallback': 'Fixed fallback' };
+  return names[src] || src || '—';
+}
+// 4-state progress: done / active (current stage) / pending.
+function setStep(id, state) {
+  const el = $(id);
+  if (!el) return;
+  el.classList.remove('is-done', 'is-active');
+  if (state === 'done') el.classList.add('is-done');
+  else if (state === 'active') el.classList.add('is-active');
+  el.querySelector('.node').textContent = state === 'done' ? '✓' : el.dataset.n;
+  if (state === 'active') el.setAttribute('aria-current', 'step');
+  else el.removeAttribute('aria-current');
+}
 
 fetch('/health').then(r => r.json()).then(h => {
   $('conf').textContent = h.confirmations_required;
-  if (h.chain_mode === 'mock') $('mock-banner').style.display = 'block';
+  if (h.chain_mode === 'mock') $('mock-banner').style.display = 'inline-flex';
 });
 
 async function createOrder() {
@@ -89,16 +482,35 @@ async function createOrder() {
     const body = await r.json();
     if (!r.ok) { $('err').textContent = body.error || 'Could not create the order.'; return; }
     orderId = body.id; expiresAt = body.expires_ts * 1000;
-    $('maza').textContent = body.maza_amount.toLocaleString();
+    $('maza').textContent = fmtMaza(body.maza_amount);
+    $('usd-due').textContent = fmtUsd(body.usd_amount);
     $('rate').textContent = body.rate.toFixed(6);
-    $('src').textContent = body.rate_source;
+    $('src').textContent = rateLabel(body.rate_source);
     $('addr').textContent = body.address;
+    // fresh order: clear any state left by an earlier quote on this page
+    // (a second createOrder without a reload must not inherit done steps or
+    // a paid/expired status line).
+    sawSeen = false; finished = false;
+    $('status').classList.remove('paid', 'warn');
+    $('status').textContent = 'Watching the chain for your payment…';
+    $('receipt').hidden = true; $('expired').hidden = true;
+    $('quote').classList.remove('is-paid', 'is-closed');
+    $('hero-hold').style.display = ''; $('hero-state').hidden = true;
+    $('qr-box').style.display = 'none'; $('qr-missing').classList.remove('show');
+    setStep('step-quote', 'done');
+    setStep('step-seen', 'active');
+    setStep('step-conf', 'pending');
+    setStep('step-receipt', 'pending');
     // QR is a convenience, not the payment path: reveal the box only when
     // the SVG actually loads, and hide it on error — the address text and
     // the Copy address button below are always the usable fallback.
     $('qr').alt = 'QR code of the MAZA payment address beginning ' + body.address.slice(0, 6);
     $('qr').onload = function () { $('qr-box').style.display = 'block'; };
     $('qr').onerror = function () { $('qr-box').style.display = 'none'; };
+    // second, additive handler: the pinned one-liner above owns the reveal/
+    // hide contract, this only surfaces the "use the address" note.
+    $('qr').addEventListener('error', function () { $('qr-missing').classList.add('show'); });
+    $('qr').addEventListener('load', function () { $('qr-missing').classList.remove('show'); });
     $('qr').src = '/orders/' + orderId + '/qr.svg';
     $('form-view').style.display = 'none';
     $('quote').style.display = 'block';
@@ -116,14 +528,72 @@ async function check() {
   const r = await fetch('/orders/' + orderId);
   if (!r.ok) return;
   const o = await r.json();
-  if (o.status === 'paid') {
-    $('status').textContent = '✓ Payment confirmed — thank you!';
-    $('status').classList.add('paid');
-    clearInterval(poller); clearInterval(timer);
-  } else if (o.status === 'expired' || o.status === 'late_paid') {
-    $('status').textContent = 'Quote expired — start a new payment.';
-    clearInterval(poller); clearInterval(timer);
+  // "Payment seen" is the one intermediate signal the existing contract
+  // exposes: the watcher stamps deposit_alerted_ts when funds first cover the
+  // quote at the low alert threshold, and confirmations only appear once the
+  // full threshold is met. Neither can fire before the funds are on-chain.
+  const seen = o.status === 'paid' || !!o.deposit_alerted_ts || Number(o.confirmations || 0) > 0;
+  if (seen && !sawSeen) {
+    sawSeen = true;
+    setStep('step-seen', 'done');
+    setStep('step-conf', 'active');
+    $('status').textContent = 'Payment seen on-chain — waiting for confirmations.';
   }
+  if (o.status === 'paid') {
+    finishReceipt(o);
+  } else if (o.status === 'expired' || o.status === 'late_paid') {
+    expireQuote(o);
+  }
+}
+
+function finishReceipt(o) {
+  if (finished) return;
+  finished = true;
+  clearInterval(poller); clearInterval(timer);
+  setStep('step-seen', 'done');
+  setStep('step-conf', 'done');
+  setStep('step-receipt', 'active');
+  $('status').textContent = '✓ Payment confirmed — thank you!';
+  $('status').classList.add('paid');
+  $('quote').classList.add('is-paid', 'is-closed');
+  // the hold countdown is meaningless once paid: swap it for the plain state
+  $('hero-hold').style.display = 'none';
+  $('hero-state').textContent = '· paid · thank you';
+  $('hero-state').hidden = false;
+  $('r-usd').textContent = fmtUsd(o.usd_amount);
+  $('r-maza').textContent = fmtMaza(o.maza_amount) + ' MAZA';
+  $('r-rate').textContent = Number(o.rate).toFixed(6) + ' USD/MAZA';
+  $('r-src').textContent = rateLabel(o.rate_source);
+  $('r-conf').textContent = Number(o.confirmations || 0) + ' of ' + $('conf').textContent;
+  $('r-tx').textContent = shortTx(o.txid);
+  if (o.txid) $('r-tx').title = o.txid;
+  $('r-time').textContent = o.paid_ts ? new Date(o.paid_ts * 1000).toLocaleString() : '—';
+  $('r-order').textContent = o.id;
+  $('receipt').hidden = false;
+  $('receipt').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function expireQuote(o) {
+  clearInterval(poller); clearInterval(timer);
+  // The quote can no longer be paid: stop showing the countdown, the QR and
+  // the address, so nobody sends funds to a dead quote. The panels below own
+  // the explanation (late payments are flagged, not lost).
+  $('quote').classList.add('is-closed');
+  $('hero-hold').style.display = 'none';
+  $('hero-state').textContent = o.status === 'late_paid' ? '· received late' : '· expired';
+  $('hero-state').hidden = false;
+  // no failed-step styling: a red "Payment seen" node would suggest funds
+  // WERE detected and then lost. The panel below states the outcome plainly.
+  if (o.status !== 'late_paid') setStep('step-seen', 'pending');
+  if (o.status === 'late_paid') {
+    $('expired-title').textContent = 'Payment arrived after this quote expired';
+    $('expired-text').textContent = 'It has been flagged for review and no action is needed from you — the operator will accept it or refund it.';
+  }
+  $('status').textContent = o.status === 'late_paid'
+    ? 'Payment received late — flagged for review.'
+    : 'Quote expired — start a new payment.';
+  $('status').classList.add('warn');
+  $('expired').hidden = false;
 }
 
 function copyAddr(btn) {

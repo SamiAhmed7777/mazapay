@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.6.0 — 2026-11-15
+
+**Branded checkout page.** The member-facing page is now a product-quality
+checkout branded with the official MazaCoin artwork (wordmark lockup on a
+light plate, coin roundel, amber `#f0a000` as the working accent replacing
+`#f5b400`, red `#f00000` reserved for the Z-accent and error *frames* —
+error *copy* uses `#ff7d7d` because pure red is 3.88:1 on the card).
+
+The single status line became a four-state progress narrative driven by the
+existing polling contract (`GET /orders/{id}`'s `status`,
+`deposit_alerted_ts`, `confirmations`): quote locked → payment seen →
+confirmed → receipt. Element ids, fetch endpoints and the `/health` demo
+flag are unchanged. A paid order now swaps the scan/address block for a
+completion panel (amount, MAZA received, locked rate + source,
+confirmations, short txid, local time, order id) that is explicitly
+screenshot-worthy, and the QR moved into a framed tile under a "Scan with
+your MazaCoin wallet" affordance with the address + copy button kept as the
+always-usable fallback.
+
+New public routes `GET /static/{name}` (exact-filename whitelist of the
+three vendored PNGs, `image/png`, `Cache-Control: public, max-age=604800`)
+and `GET /favicon.ico` (the 180px roundel), because the response CSP is
+`default-src 'none'; img-src 'self'` and blocks `data:` URIs. No external
+requests, no fonts/CDN. Every text/surface pair is measured in
+`tests/test_checkout_ui.py` (computed WCAG 2.x ratios, 4.5:1 text floor,
+3:1 component boundary floor) so a later palette edit cannot regress
+legibility.
+
 ## 0.5.0 — 2026-11-15
 
 **Operator dashboard.** New token-protected `GET /admin`: a

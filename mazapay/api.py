@@ -29,6 +29,8 @@ Safety model (v0.3 — reworked across judge rounds 1-4):
 
 Endpoints:
   GET  /                              — member-facing checkout page (public)
+  GET  /static/{name}                 — whitelisted brand PNGs (public)
+  GET  /favicon.ico                   — coin roundel (public, PNG bytes)
   GET  /health                        — liveness + mode info (no auth)
   POST /vendors                       — {name, code, maza_address?, notes?}
   GET  /vendors
@@ -66,6 +68,26 @@ from . import config, mip_export, pricing, qr, store, watcher
 from .mazad import ChainError, get_chain, is_mock
 
 _TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "checkout.html")
+
+# Static brand assets (official MazaCoin artwork, vendored in the package).
+# Serving is an EXACT-FILENAME whitelist: the URL segment is matched against
+# this dict, so no request can name a path (traversal, absolute, encoded or
+# otherwise) — an unknown key is a plain 404 and the filesystem is never
+# consulted with client-controlled input. CSP img-src 'self' allows only
+# these same-origin bytes; data: URIs stay blocked.
+_ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+_ASSETS = {
+    "mazacoin-64.png": ("image/png", "mazacoin-64.png"),
+    "mazacoin-180.png": ("image/png", "mazacoin-180.png"),
+    "mazacoin-wordmark.png": ("image/png", "mazacoin-wordmark.png"),
+}
+# Brand art is immutable for a release: a long public TTL is safe because the
+# filename changes when the artwork does. Cached in-process so a page load is
+# not a per-request disk read (and a missing file fails at first use, not at
+# import time, so the rest of the API keeps serving).
+_ASSET_CACHE: Dict[str, bytes] = {}
+_ASSET_CACHE_LOCK = threading.Lock()
+
 
 _ACCESS_LOG = logging.getLogger("mazapay.access")
 _ERROR_LOG = logging.getLogger("mazapay.errors")
@@ -520,6 +542,8 @@ def simulate_payment(order_id: str, confirms: int) -> Dict[str, Any]:
 # a watch address and lock a quote — no money can move through them.
 _ROUTES = [
     ("GET", re.compile(r"^/$"), "index", False),
+    ("GET", re.compile(r"^/favicon\.ico$"), "favicon", False),
+    ("GET", re.compile(r"^/static/([\w.-]+)$"), "static_asset", False),
     ("GET", re.compile(r"^/health$"), "health", False),
     ("POST", re.compile(r"^/vendors$"), "vendors_post", True),
     ("GET", re.compile(r"^/vendors$"), "vendors_get", True),
@@ -984,6 +1008,52 @@ class Handler(BaseHTTPRequestHandler):
         self._security_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _asset_bytes(self, name: str) -> Tuple[str, bytes]:
+        """Resolve a whitelisted asset by EXACT filename; 404 otherwise.
+
+        The whitelist is the security boundary: an unknown name never reaches
+        the filesystem (no joins, no normalization, no path input at all), so
+        traversal, absolute paths and encoded separators are all just 404s.
+        A whitelisted name that is missing on disk is a 404 too — never a 500
+        — because a half-copied release must not take the page down.
+        """
+        entry = _ASSETS.get(name)
+        if entry is None:
+            raise ApiError(404, "no such asset")
+        content_type, filename = entry
+        with _ASSET_CACHE_LOCK:
+            body = _ASSET_CACHE.get(name)
+            if body is None:
+                try:
+                    with open(os.path.join(_ASSETS_DIR, filename), "rb") as fh:
+                        body = fh.read()
+                except OSError as exc:
+                    _ERROR_LOG.warning("asset %s unreadable: %s", name, exc.__class__.__name__)
+                    raise ApiError(404, "no such asset") from None
+                _ASSET_CACHE[name] = body
+        return content_type, body
+
+    def _send_asset(self, name: str) -> None:
+        content_type, body = self._asset_bytes(name)
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        # Public + immutable-per-release: the filename changes when the art
+        # does, so a revalidation round trip per page load buys nothing.
+        self.send_header("Cache-Control", "public, max-age=604800")
+        self.send_header("Content-Length", str(len(body)))
+        self._security_headers()
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _static_asset(self, name: str) -> None:
+        self._send_asset(name)
+
+    def _favicon(self) -> None:
+        # Browsers request /favicon.ico unconditionally; serve the coin
+        # roundel as PNG (every current browser sniffs the real type from the
+        # bytes; the declared type is honest).
+        self._send_asset("mazacoin-180.png")
 
     def _health(self) -> None:
         _chain, mode = get_chain()

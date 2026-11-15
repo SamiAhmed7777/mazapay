@@ -67,9 +67,16 @@ python3 -m mazapay.api                          # serve on 127.0.0.1:8443 (mock 
 ```
 
 Open **http://127.0.0.1:8443/** in a browser for the member-facing
-checkout page — enter a USD amount, get a locked quote and a MAZA address,
-watch it confirm. (On the mock chain a demo banner shows; no real funds
-move.) CLI equivalents:
+checkout page — enter a USD amount, get a locked quote, scan the framed
+QR (or copy the address), and follow the four-state progress
+(quote locked → payment seen → confirmed → receipt) to a receipt panel
+worth screenshotting. The page is branded with the official MazaCoin
+artwork, served from inside the package (`GET /static/{name}`,
+exact-filename whitelist, `image/png`, `Cache-Control: public,
+max-age=604800`) because the response CSP allows `img-src 'self'` and
+blocks `data:` URIs — no external fonts or CDNs, system font stack only.
+(On the mock chain a small demo chip shows; no real funds move.) CLI
+equivalents:
 
 ```bash
 curl -s localhost:8443/health
@@ -236,6 +243,13 @@ are the ones with retry semantics).
   of one `getnewaddress` per order) is a deploy option if wallet-key
   growth under abuse ever becomes a concern — deliberately not built
   into the service.
+- **Static assets are a whitelist, not a path**: `GET /static/{name}`
+  (and `/favicon.ico`, which serves the 180px coin roundel) answers only
+  for the three filenames in `mazapay/api.py::_ASSETS`. The URL segment is
+  never joined onto a directory, so traversal, absolute paths, encoded
+  separators and NUL-shaped names are plain `404`s — there is no filesystem
+  input from the client. Bytes are cached in-process after the first read;
+  a whitelisted-but-missing file is a 404, never a 500.
 - **Single-process**: the SQLite store is safe for one service process; a
   multi-instance deployment needs a real DB layer first.
 - MockChain exists so the whole flow is testable without a synced node —

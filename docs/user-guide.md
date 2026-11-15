@@ -174,23 +174,32 @@ http://127.0.0.1:8443/
 ### The flow, step by step
 
 1. **Enter the USD amount** the member owes (say, `25.00`) and click
-   **Quote**.
+   **Lock quote**. The page is branded with the MazaCoin wordmark and
+   coin; if the bridge is running on the mock chain a small **Demo mode**
+   chip shows at the top of the card.
 2. MazaPay looks up the live MAZA price (from a public price service —
    no account needed) and **locks the rate** for this order. The page
    shows the exact MAZA amount to send, the locked rate, and a
    countdown — the quote is good for **15 minutes** by default.
-3. The page shows a **MAZA deposit address** (a long string starting
-   with `M`) with a **QR code** beside it — scanning the QR fills in the
-   address in most wallet apps (it is the address only; you still enter
-   the amount yourself). Prefer typing? Use the **Copy address** button
-   — paste it into the member's wallet or give it to them. Send
-   *exactly* the quoted MAZA amount to this address. (A little *more*
-   is fine and still credits; *less* will not register.)
-4. The page says **Waiting for payment…** and checks automatically
+3. The page shows a **QR code** in a framed tile under **"Scan with
+   your MazaCoin wallet"** — scanning fills in the address in most wallet
+   apps (it is the address only; you still enter the amount yourself).
+   The address itself is printed below, with a **Copy address** button as
+   the always-usable fallback. Send *exactly* the quoted MAZA amount to
+   this address. (A little *more* is fine and still credits; *less* will
+   not register.)
+4. A four-step progress line tracks the payment: **Quote locked →
+   Payment seen → Confirmed → Receipt**. Under it the page reports
+   **Watching the chain for your payment…** and checks automatically
    every few seconds.
-5. Once the payment arrives and reaches **6 confirmations**, the page
-   turns green: **✓ Payment confirmed**. The order is now `paid` in the
-   bridge's records, with the transaction ID saved for the audit trail.
+5. Once the payment arrives and reaches **6 confirmations**, the progress
+   completes and a **receipt panel** appears: amount in USD, MAZA
+   received, the locked rate and its source, confirmations, the
+   transaction id, the local time, and the order id — with a reminder
+   that the panel can be screenshotted for the member's records. The
+   order is now `paid` in the bridge's records, with the transaction ID
+   saved for the audit trail. (Expired quotes get a panel offering a
+   fresh quote; a late payment is flagged for review rather than lost.)
 
 ### What the statuses mean
 
@@ -464,7 +473,7 @@ turns those files into posted accounting entries.
 
 **Is there a practice mode?**
 Yes. With no wallet configured, the bridge runs against a clearly
-labeled mock chain (the checkout page shows a "Demo mode" banner and
+labeled mock chain (the checkout page shows a subdued "Demo mode" chip and
 `/health` reports `chain_mode: mock`). Nothing real moves — handy for
 training before Step 2.
 
