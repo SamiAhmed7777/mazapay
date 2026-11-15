@@ -59,17 +59,15 @@
   .shell, .masthead, .card, .fine { position:relative; z-index:1; }
   .shell { width:100%; max-width:520px; display:flex; flex-direction:column; gap:14px; }
 
-  /* ---- masthead: official wordmark on a light plate (the black A's of the
-     wordmark need a bright ground on a dark page) + coin roundel ---- */
-  .masthead { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-  .wordplate {
-    display:inline-flex; align-items:center;
-    background:#f4f6f9;
-    border-radius:11px;
-    padding:7px 11px;
-    box-shadow:0 6px 18px -10px rgba(0,0,0,.9), inset 0 0 0 1px rgba(255,255,255,.6);
+  /* ---- masthead: official "MAZA Accepted Here" merchant badge (Sami's pick,
+     2026-11-15) + coin roundel. The badge is a full lockup on its own
+     light/black/yellow bands; CSS rounding clips the JPG's corner artifacts. ---- */
+  .masthead { display:flex; align-items:center; justify-content:center; }
+  .badge-accepted {
+    display:block; width:168px; height:auto;
+    border-radius:12px;
+    box-shadow:0 6px 18px -10px rgba(0,0,0,.9);
   }
-  .wordplate img { display:block; height:26px; width:auto; }
   .masthead .coin { width:26px; height:26px; border-radius:50%; display:block; }
   .eyebrow {
     margin:0 0 7px; font-size:.68rem; font-weight:700;
@@ -334,7 +332,7 @@
   @media (min-width:640px) {
     body { padding:44px 20px 40px; }
     .card { padding:30px 28px 30px; }
-    .wordplate img { height:30px; }
+    .badge-accepted { width:184px; }
     .lede { font-size:.97rem; }
     #qr { width:208px; height:208px; }
   }
@@ -343,10 +341,7 @@
 <body>
 <main class="shell">
   <div class="masthead">
-    <span class="wordplate">
-      <img src="/static/mazacoin-wordmark.png" alt="MazaCoin" width="86" height="26">
-    </span>
-    <img class="coin" src="/static/mazacoin-64.png" alt="" width="26" height="26">
+    <img class="badge-accepted" src="/static/mazacoin-accepted.png" alt="MazaCoin — MAZA accepted here" width="168" height="111">
   </div>
 
   <div class="card">

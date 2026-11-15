@@ -41,6 +41,7 @@ PINNED_SHA256 = {
     "mazacoin-64.png": "cd1d53c7213df1133f4ca1800cc6ea5557331abbdda2553cd2f70db74dc47c98",
     "mazacoin-180.png": "07774f3d1cb5a261bf2218a9843194f0180a165de091312ce7010dcf5394ab36",
     "mazacoin-wordmark.png": "297b571ca7129b165f81b918506a9ef0f502e0c5b3aa1703cd7f4a9d2b39c5cb",
+    "mazacoin-accepted.png": "36fa8b4666ff1065f75590c121613fc27ef21b2d4cf09fff41c0d459a3c825dd",
 }
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
@@ -197,7 +198,7 @@ class TestCheckoutPageStructure(unittest.TestCase):
         self.page = _page()
 
     def test_brand_lockup_and_palette(self):
-        self.assertIn("/static/mazacoin-wordmark.png", self.page)
+        self.assertIn("/static/mazacoin-accepted.png", self.page)
         self.assertIn("/static/mazacoin-64.png", self.page)
         self.assertIn("/static/mazacoin-180.png", self.page)  # favicon link
         self.assertIn('rel="icon"', self.page)

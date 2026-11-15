@@ -79,7 +79,7 @@ _ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
 _ASSETS = {
     "mazacoin-64.png": ("image/png", "mazacoin-64.png"),
     "mazacoin-180.png": ("image/png", "mazacoin-180.png"),
-    "mazacoin-wordmark.png": ("image/png", "mazacoin-wordmark.png"),
+    "mazacoin-accepted.png": ("image/png", "mazacoin-accepted.png"),
 }
 # Brand art is immutable for a release: a long public TTL is safe because the
 # filename changes when the artwork does. Cached in-process so a page load is
