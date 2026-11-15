@@ -6,6 +6,13 @@ received amount (at CONFIRMATIONS_REQUIRED) covers the quoted MAZA amount,
 the order flips to `paid` with paid_ts + txid, and an audit entry records
 the receipt evidence (amount, confirmations, txid).
 
+Each poll also drives the alert pipeline (see notifier.py): a
+`deposit_detected` alert fires once the funds first cover the quote at
+ALERT_DEPOSIT_MINCONF (delivered before it is marked, retried across
+polls until a channel accepts it), and a `deposit_confirmed` alert fires
+at the paid/late_paid flip (marked atomically with the flip, dispatched
+once — restarts can never repeat either alert).
+
 Late payments are a reconciliation state, not a dead end: an order whose
 quote expired but whose address then receives the funds moves to
 `late_paid` (the money is in the wallet the bridge controls) and waits for
@@ -18,7 +25,7 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from . import config, store
+from . import config, notifier, store
 from .mazad import ChainError, get_chain
 
 
@@ -68,55 +75,137 @@ def find_send_txid(chain: Any, address: str, amount: float, comment: str) -> str
     return ""
 
 
+def _alert_payload(
+    order: Dict[str, Any], event: str, received: float, txid: Optional[str], status: str
+) -> Dict[str, Any]:
+    """JSON-safe alert body shared by every channel (no secrets in it)."""
+    return {
+        "service": "mazapay",
+        "event": event,
+        "kind": order.get("kind"),
+        "order_id": order.get("id"),
+        "status": status,
+        "address": order.get("address"),
+        "usd_amount": order.get("usd_amount"),
+        "maza_amount": order.get("maza_amount"),
+        "received": received,
+        "confirmations_required": config.CONFIRMATIONS_REQUIRED,
+        "txid": txid,
+        "ts": time.time(),
+    }
+
+
+def _dispatch(alert: Dict[str, Any]) -> bool:
+    """Deliver to every configured channel; True only if all accepted.
+
+    An empty channel list (alerts disabled or every channel off) counts
+    as NOT delivered, so nothing is ever marked as alerted that no
+    channel actually saw.
+    """
+    channels = notifier.build_notifiers()
+    if not channels:
+        return False
+    return all(channel.send(alert) for channel in channels)
+
+
+def _watch_inbound(
+    chain: Any, order: Dict[str, Any], counts: Dict[str, int], late: bool
+) -> None:
+    """Evaluate one inbound order's address: deposit alert + confirm flip.
+
+    `late` selects the expired-order reconciliation path (status
+    late_paid). Below-threshold and RPC-failure outcomes count as
+    still_pending only on the live path, matching the pre-alerting
+    behaviour of the expired loop.
+    """
+    maza = order["maza_amount"]
+    if maza is None:
+        if not late:
+            counts["still_pending"] += 1
+        return
+    address = order["address"]
+
+    # Stage 1 — deposit detected: funds cover the quote at a low
+    # confirmation threshold. Deliver first, mark only on success: the
+    # deposit_alerted_ts marker on the order row survives restarts, so a
+    # delivered alert is never repeated, while an undelivered one (channel
+    # down) is retried on every subsequent poll.
+    if order.get("deposit_alerted_ts") is None:
+        try:
+            seen = chain.getreceivedbyaddress(address, config.ALERT_DEPOSIT_MINCONF)
+        except Exception:
+            seen = None
+        if seen is not None and seen >= maza:
+            payload = _alert_payload(
+                order, "deposit_detected", seen, find_txid(chain, address, maza),
+                order["status"],
+            )
+            if _dispatch(payload):
+                store.update_order(
+                    order["id"], {"deposit_alerted_ts": time.time()}, "deposit_alerted"
+                )
+                counts["deposit_alerts"] += 1
+
+    # Stage 2 — confirmation threshold: flips paid/late_paid exactly once
+    # (the order then leaves the watch set). confirm_alerted_ts rides in
+    # the SAME update as the status flip, so the confirm alert is armed
+    # exactly once per order regardless of restarts.
+    try:
+        received = chain.getreceivedbyaddress(address, config.CONFIRMATIONS_REQUIRED)
+    except Exception:
+        if not late:
+            counts["still_pending"] += 1
+        return
+    if received >= maza:
+        txid = find_txid(chain, address, maza)
+        status = "late_paid" if late else "paid"
+        fields = {
+            "status": status,
+            "paid_ts": time.time(),
+            "confirmations": config.CONFIRMATIONS_REQUIRED,
+            "txid": txid,
+        }
+        if config.ALERTS_ENABLED:
+            # Armed in the SAME update as the flip: exactly once per order,
+            # restarts can never re-alert the transition. When alerting is
+            # disabled no marker is written, so the audit entry stays
+            # identical to the pre-alerting behaviour.
+            fields["confirm_alerted_ts"] = time.time()
+        store.update_order(
+            order["id"],
+            fields,
+            "late_receipt_detected" if late else "receipt_confirmed",
+        )
+        counts["late_paid" if late else "paid"] += 1
+        if _dispatch(_alert_payload(order, "deposit_confirmed", received, txid, status)):
+            counts["confirm_alerts"] += 1
+    elif not late:
+        counts["still_pending"] += 1
+
+
 def poll_once() -> Dict[str, int]:
-    """One watcher pass. Returns counts: {paid, late_paid, expired, still_pending}."""
+    """One watcher pass.
+
+    Returns counts: {paid, late_paid, expired, still_pending,
+    deposit_alerts, confirm_alerts} — the last two count alerts actually
+    delivered by this pass (a retried deposit alert counts again: it had
+    not been delivered before).
+    """
     chain, _mode = get_chain()
     store.mark_expired_stale()
-    counts = {"paid": 0, "late_paid": 0, "expired": 0, "still_pending": 0}
+    counts = {
+        "paid": 0,
+        "late_paid": 0,
+        "expired": 0,
+        "still_pending": 0,
+        "deposit_alerts": 0,
+        "confirm_alerts": 0,
+    }
     for order in store.pending_inbound():
-        try:
-            received = chain.getreceivedbyaddress(
-                order["address"], config.CONFIRMATIONS_REQUIRED
-            )
-        except Exception:
-            counts["still_pending"] += 1
-            continue
-        if order["maza_amount"] is not None and received >= order["maza_amount"]:
-            txid = find_txid(chain, order["address"], order["maza_amount"])
-            store.update_order(
-                order["id"],
-                {
-                    "status": "paid",
-                    "paid_ts": time.time(),
-                    "confirmations": config.CONFIRMATIONS_REQUIRED,
-                    "txid": txid,
-                },
-                "receipt_confirmed",
-            )
-            counts["paid"] += 1
-        else:
-            counts["still_pending"] += 1
+        _watch_inbound(chain, order, counts, late=False)
     # Late payments on expired orders: reconcile, never drop.
     for order in store.expired_inbound():
-        try:
-            received = chain.getreceivedbyaddress(
-                order["address"], config.CONFIRMATIONS_REQUIRED
-            )
-        except Exception:
-            continue
-        if order["maza_amount"] is not None and received >= order["maza_amount"]:
-            txid = find_txid(chain, order["address"], order["maza_amount"])
-            store.update_order(
-                order["id"],
-                {
-                    "status": "late_paid",
-                    "paid_ts": time.time(),
-                    "confirmations": config.CONFIRMATIONS_REQUIRED,
-                    "txid": txid,
-                },
-                "late_receipt_detected",
-            )
-            counts["late_paid"] += 1
+        _watch_inbound(chain, order, counts, late=True)
     return counts
 
 

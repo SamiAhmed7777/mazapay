@@ -58,6 +58,22 @@ MAZAD_RPC_USER = os.environ.get("MAZAPAY_MAZAD_RPC_USER", "")
 MAZAD_RPC_PASSWORD = os.environ.get("MAZAPAY_MAZAD_RPC_PASSWORD", "")
 MAZAD_RPC_TIMEOUT = _int("MAZAPAY_MAZAD_RPC_TIMEOUT", 10)
 
+# --- watcher alerting --------------------------------------------------------
+# Deposit/confirmation alerts for inbound payments. Two kinds fire on an
+# order's watch address: deposit_detected (funds covering the quote are
+# visible at ALERT_DEPOSIT_MINCONF) and deposit_confirmed (the paid/late_paid
+# flip at CONFIRMATIONS_REQUIRED). Channels are stdlib-only: the log notifier
+# writes to the mazapay.alerts logger; the webhook POSTs the alert as JSON
+# (optional bearer token). Idempotency lives in the store: the deposit alert
+# is marked only after delivery (undelivered ones retry every poll), the
+# confirm alert is marked atomically with the paid flip.
+ALERTS_ENABLED = os.environ.get("MAZAPAY_ALERTS", "1") in ("1", "true", "yes")
+ALERT_LOG_ENABLED = os.environ.get("MAZAPAY_ALERT_LOG", "1") in ("1", "true", "yes")
+ALERT_WEBHOOK_URL = os.environ.get("MAZAPAY_ALERT_WEBHOOK_URL", "")
+ALERT_WEBHOOK_TOKEN = os.environ.get("MAZAPAY_ALERT_WEBHOOK_TOKEN", "")
+ALERT_WEBHOOK_TIMEOUT = _int("MAZAPAY_ALERT_WEBHOOK_TIMEOUT", 5)
+ALERT_DEPOSIT_MINCONF = _int("MAZAPAY_ALERT_DEPOSIT_MINCONF", 1)
+
 # --- storage / export ------------------------------------------------------
 DB_PATH = os.environ.get("MAZAPAY_DB", "/tmp/mazapay-dev.sqlite3")
 MIP_EXPORT_DIR = os.environ.get("MAZAPAY_MIP_EXPORT_DIR", "/tmp/mazapay-mip-out")

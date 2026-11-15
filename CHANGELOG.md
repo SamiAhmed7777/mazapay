@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0 — 2026-11-15
+
+**Deposit and confirmation alerts.** The watcher now notifies on two
+moments of every inbound payment: `deposit_detected` (funds covering the
+quote are visible at `MAZAPAY_ALERT_DEPOSIT_MINCONF`, before the payment
+is final) and `deposit_confirmed` (the `paid`/`late_paid` flip at
+`MAZAPAY_CONFIRMATIONS_REQUIRED`). Channels are pluggable and
+stdlib-only: a log notifier (on by default, `mazapay.alerts` logger) and
+a JSON webhook (`MAZAPAY_ALERT_WEBHOOK_URL`, optional bearer token via
+`MAZAPAY_ALERT_WEBHOOK_TOKEN`), master-switched by `MAZAPAY_ALERTS`.
+
+Idempotency lives in the store, so restarts never duplicate an alert:
+the deposit alert is marked on the order only after delivery and
+undelivered ones retry every poll (a webhook outage degrades to delayed
+delivery); the confirm alert's marker rides the same UPDATE as the paid
+flip, making it exactly-once per order. `poll_once` counts now include
+`deposit_alerts` / `confirm_alerts` (delivered this pass). New
+`orders.deposit_alerted_ts` / `confirm_alerted_ts` columns are added by
+the usual tolerant migration; alert bodies carry amounts and public
+chain data only, never credentials.
+
 ## 0.3.1 — 2026-11-15
 
 **Bring your own daemon, safely.** New `python3 -m mazapay.check_daemon`

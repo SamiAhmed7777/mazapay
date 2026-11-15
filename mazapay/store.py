@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS orders (
     created_ts REAL NOT NULL,
     expires_ts REAL,
     paid_ts REAL,
+    deposit_alerted_ts REAL,         -- deposit alert DELIVERED (marked after dispatch)
+    confirm_alerted_ts REAL,         -- confirm alert armed atomically with the paid flip
     exported_ts REAL,
     nonce TEXT,
     export_id TEXT,
@@ -109,6 +111,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         ("export_state", "TEXT"),
         ("export_lease_ts", "REAL"),
         ("parent_order_id", "TEXT"),
+        ("deposit_alerted_ts", "REAL"),
+        ("confirm_alerted_ts", "REAL"),
     ):
         if col not in cols:
             conn.execute(f"ALTER TABLE orders ADD COLUMN {col} {decl}")

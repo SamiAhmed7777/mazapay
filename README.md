@@ -149,11 +149,40 @@ mode 0600). CI runs the suite on Python 3.10–3.13 on every push.
 | `MAZAPAY_TX_SCAN_LIMIT` | `1000` | wallet transaction scan depth for reconcile/retry txid matching |
 | `MAZAPAY_MIP_CLAIM_ADOPT_SECONDS` | `120` | age before a crashed export claim is adoptable |
 | `MAZAPAY_WATCH_INTERVAL` | `10` | watcher poll interval (s) |
+| `MAZAPAY_ALERTS` | `1` | master switch for watcher alerts |
+| `MAZAPAY_ALERT_LOG` | `1` | log channel: one structured line per alert on the `mazapay.alerts` logger |
+| `MAZAPAY_ALERT_WEBHOOK_URL` | *(empty → off)* | POST alerts as JSON to this URL |
+| `MAZAPAY_ALERT_WEBHOOK_TOKEN` | *(empty)* | sent as `Authorization: Bearer <token>` when set |
+| `MAZAPAY_ALERT_WEBHOOK_TIMEOUT` | `5` | webhook POST timeout (s) |
+| `MAZAPAY_ALERT_DEPOSIT_MINCONF` | `1` | confirmations before the early "deposit detected" alert fires |
 | `MAZAPAY_DB` | `/tmp/mazapay-dev.sqlite3` | SQLite store path |
 | `MAZAPAY_MIP_EXPORT_DIR` | `/tmp/mazapay-mip-out` | where CSV sessions land |
 | `MAZAPAY_MIP_RECEIPT_COLUMNS` / `MAZAPAY_MIP_DISBURSEMENT_COLUMNS` | see `config.py` | CSV column layout per org import definition |
 | `MAZAPAY_PORT` / `MAZAPAY_HOST` | `8443` / `127.0.0.1` | HTTP listener |
 | `MAZAPAY_TEST_TMP` | *(system temp)* | writable temp root for the test suite (sandbox runs) |
+
+## Alerts
+
+The watcher emits two alerts per inbound order, over any configured
+channel (log by default, optional JSON webhook):
+
+- **`deposit_detected`** — funds covering the quote are visible on the
+  order's watch address at `MAZAPAY_ALERT_DEPOSIT_MINCONF`, before the
+  payment is final. Delivered first, marked (`deposit_alerted_ts`) only
+  after a channel accepts it: an outage delays the alert, restarts never
+  duplicate a delivered one, and partial payments (below the quoted
+  amount) do not alert.
+- **`deposit_confirmed`** — the order reached `MAZAPAY_CONFIRMATIONS`
+  and flipped to `paid`/`late_paid`. The marker (`confirm_alerted_ts`)
+  is written in the same store update as the flip, so exactly one alert
+  is dispatched per order no matter how often the watcher restarts.
+
+Alert bodies are JSON: `event`, `order_id`, `status`, `address`,
+`usd_amount`, `maza_amount`, `received`, `confirmations_required`,
+`txid`, `ts` — amounts and public chain data only, no credentials. If a
+confirm alert's dispatch fails at the flip instant, it is not retried
+(the receipt is always in the append-only audit trail; deposit alerts
+are the ones with retry semantics).
 
 ## Order states
 
