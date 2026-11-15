@@ -17,7 +17,7 @@ MIP FX columns (IRS Notice 2014-21 / ASU 2023-08 treatment).
 """
 import json
 import urllib.request
-from decimal import Decimal, InvalidOperation, ROUND_DOWN
+from decimal import Decimal, DecimalException, InvalidOperation, ROUND_DOWN
 from typing import Optional, Tuple
 
 from . import config
@@ -41,9 +41,16 @@ def _price_paprika() -> Tuple[Decimal, str]:
     if isinstance(data, dict):
         quotes = data.get("quotes")
         usd = quotes.get("USD", {}) if isinstance(quotes, dict) else {}
+        if not isinstance(usd, dict):
+            usd = {}  # an explicit null / non-object USD entry is no price
         raw = usd.get("price")
         try:
             price = Decimal(str(raw)) if raw is not None else None
+            # NaN/Infinity ticker values parse as Decimal but are unusable:
+            # comparing them raises InvalidOperation and an Infinity rate
+            # explodes the quote quantize — treat both as "no price".
+            if price is not None and not price.is_finite():
+                price = None
         except InvalidOperation:
             price = None
     if not price or price <= 0:
@@ -55,8 +62,20 @@ def _price_lore() -> Tuple[Decimal, str]:
     if not config.LORE_TICKER_URL:
         raise PriceUnavailable("lore source not configured")
     data = _fetch_json(config.LORE_TICKER_URL)
-    if isinstance(data, list) and data and data[0].get("price_usd"):
-        return Decimal(str(data[0]["price_usd"])), "lore"
+    if (
+        isinstance(data, list)
+        and data
+        and isinstance(data[0], dict)
+        and data[0].get("price_usd")
+    ):
+        try:
+            price = Decimal(str(data[0]["price_usd"]))
+        except DecimalException:
+            raise PriceUnavailable(
+                f"lore returned bad price {data[0]['price_usd']!r}"
+            ) from None
+        if price.is_finite() and price > 0:
+            return price, "lore"
     raise PriceUnavailable(f"lore returned {data!r}")
 
 
@@ -104,15 +123,41 @@ def quote_maza(usd_amount, price: Optional[Decimal] = None) -> Tuple[Decimal, De
     bridge prices conservatively for the payer, and the locked rate column
     records the precise ratio used.
     """
-    usd = Decimal(str(usd_amount))
-    if usd <= 0:
-        raise ValueError("usd_amount must be positive")
+    usd = _finite_positive_usd(usd_amount)
     if price is None:
         rate, source = get_maza_usd()
     else:
-        rate, source = Decimal(str(price)), "given"
+        try:
+            rate = Decimal(str(price))
+        except InvalidOperation:
+            raise ValueError("price must be a number") from None
+        if not rate.is_finite() or rate <= 0:
+            raise ValueError("price must be a positive, finite number")
+        source = "given"
     granularity = Decimal(10) ** -int(config.MAZA_DECIMALS)
-    maza = (usd / rate).quantize(granularity, rounding=ROUND_DOWN)
+    try:
+        maza = (usd / rate).quantize(granularity, rounding=ROUND_DOWN)
+    except DecimalException:
+        # huge exponents, non-finite/zero rates overflow or fault the decimal
+        # context — a caller-input ValueError, never an arithmetic escape
+        raise ValueError("usd_amount out of range for MAZA precision") from None
+    if not maza.is_finite():
+        # a non-finite rate (e.g. NaN) quantizes to a quiet NaN — refuse it
+        # before the comparison, which would itself raise InvalidOperation
+        raise ValueError("quote produced a non-finite MAZA amount")
     if maza <= 0:
         raise ValueError("usd_amount too small for MAZA granularity")
     return maza, rate, source
+
+
+def _finite_positive_usd(usd_amount) -> Decimal:
+    """Parse a positive, finite Decimal; anything else raises ValueError."""
+    try:
+        usd = Decimal(str(usd_amount))
+    except InvalidOperation:
+        raise ValueError("usd_amount must be a number") from None
+    if not usd.is_finite():
+        raise ValueError("usd_amount must be a finite number")
+    if usd <= 0:
+        raise ValueError("usd_amount must be positive")
+    return usd

@@ -276,9 +276,24 @@ def list_orders(kind: Optional[str] = None, status: Optional[str] = None) -> Lis
     return [dict(r) for r in rows]
 
 
+_ORDER_COLUMNS = {
+    # Whitelist for dynamically built UPDATE column lists: a crafted dict
+    # key like "status='x', vendor_id" would otherwise be valid injected
+    # SQL (values are bound, keys are interpolated).
+    "kind", "vendor_id", "ref", "usd_amount", "maza_amount", "rate",
+    "rate_source", "address", "status", "txid", "confirmations",
+    "created_ts", "expires_ts", "paid_ts", "deposit_alerted_ts",
+    "confirm_alerted_ts", "exported_ts", "nonce", "export_id",
+    "export_state", "export_lease_ts", "parent_order_id",
+}
+
+
 def update_order(order_id: str, fields: Dict[str, Any], event: str) -> None:
     if not fields:
         return
+    unknown = [k for k in fields if k not in _ORDER_COLUMNS]
+    if unknown:
+        raise ValueError(f"unknown order columns: {unknown}")
     cols = ", ".join(f"{k}=?" for k in fields)
     with db() as conn:
         conn.execute(
@@ -302,6 +317,9 @@ def transition(
     can never both drive the same transition.
     """
     fields = dict(fields or {})
+    unknown = [k for k in fields if k not in _ORDER_COLUMNS]
+    if unknown:
+        raise ValueError(f"unknown order columns: {unknown}")
     cols = ", ".join(["status=?"] + [f"{k}=?" for k in fields])
     with db() as conn:
         cur = conn.execute(

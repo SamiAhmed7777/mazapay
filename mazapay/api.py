@@ -46,6 +46,7 @@ import hmac
 import json
 import os
 import re
+import sqlite3
 import threading
 import time
 import uuid
@@ -67,24 +68,53 @@ class ApiError(Exception):
         self.message = message
 
 
+_MAX_USD_AMOUNT = Decimal("1000000000000")  # $1T sanity ceiling
+_MAX_BODY_BYTES = 10 * 1024 * 1024  # 10 MiB request-body cap (see _body)
+
+
 def _usd_amount(value: Any, field: str = "usd_amount") -> Decimal:
-    """Parse a positive money amount strictly; non-numeric input is 400."""
+    """Parse a positive money amount strictly; non-numeric input is 400.
+
+    NaN/Infinity are refused: they are not money, a NaN comparison raises
+    InvalidOperation, and an Infinity/large-exponent amount raises
+    decimal.Overflow inside the quote quantize — each of which surfaced as
+    an unhandled 500 instead of a 4xx.
+    """
     if value is None or value == "":
         raise ApiError(400, f"{field} must be a positive number")
     try:
         usd = Decimal(str(value))
     except (InvalidOperation, ValueError):
         raise ApiError(400, f"{field} must be a number") from None
+    if not usd.is_finite():
+        raise ApiError(400, f"{field} must be a finite number")
     if usd <= 0:
         raise ApiError(400, f"{field} must be positive")
+    if usd > _MAX_USD_AMOUNT:
+        raise ApiError(400, f"{field} exceeds the maximum supported amount")
     return usd
 
 
 def _confirmations(value: Any) -> int:
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: float('inf') / 1e999 are JSON-representable and
+        # cannot convert to int — a 400, never a 500.
         raise ApiError(400, "confirms must be an integer") from None
+
+
+def _str_field(value: Any, field: str) -> str:
+    """Coerce an optional free-form string field; structured types are 400.
+
+    Dict/list values would otherwise crash the SQLite bind (ProgrammingError
+    -> 500) or ride into the store and the MIP CSV export untouched.
+    """
+    if value is None or value == "":
+        return ""
+    if isinstance(value, str):
+        return value
+    raise ApiError(400, f"{field} must be a string")
 
 
 def _quote_or_503(usd: Decimal) -> Tuple[Decimal, Decimal, str]:
@@ -97,8 +127,8 @@ def _quote_or_503(usd: Decimal) -> Tuple[Decimal, Decimal, str]:
 
 def _address_from(payload: Dict[str, Any]) -> Tuple[str, str]:
     """Resolve + validate the payee address; returns (address, vendor_id)."""
-    vendor_id = payload.get("vendor_id", "")
-    address = payload.get("address", "")
+    vendor_id = _str_field(payload.get("vendor_id", ""), "vendor_id")
+    address = _str_field(payload.get("address", ""), "address")
     if vendor_id and not store.get_vendor(vendor_id):
         raise ApiError(404, f"vendor {vendor_id} not found")
     if vendor_id and not address:
@@ -208,7 +238,7 @@ def disburse(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Send MAZA to a validated address; intent recorded before broadcast."""
     usd = _usd_amount(payload.get("usd_amount"))
     address, vendor_id = _address_from(payload)
-    return _broadcast_out(usd, address, vendor_id, payload.get("ref", ""))
+    return _broadcast_out(usd, address, vendor_id, _str_field(payload.get("ref", ""), "ref"))
 
 
 def reconcile_payment(order_id: str) -> Dict[str, Any]:
@@ -379,9 +409,9 @@ def refund_late(order_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         raise ApiError(409, f"order {order_id} is '{order['status']}'; refund is for late_paid")
     if not store.transition(order_id, "late_paid", "refunding", event="refund_claimed"):
         raise ApiError(409, f"order {order_id} changed state concurrently; re-check and retry")
-    address = payload.get("address", "") or (store.get_vendor(order["vendor_id"]) or {}).get(
-        "maza_address", ""
-    )
+    address = _str_field(payload.get("address", ""), "address") or (
+        store.get_vendor(order["vendor_id"]) or {}
+    ).get("maza_address", "")
     if not address:
         store.update_order(order["id"], {"status": "late_paid"}, "refund_needs_address")
         raise ApiError(400, "address required for refund")
@@ -475,9 +505,13 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length") or 0)
         if not length:
             return {}
+        if length > _MAX_BODY_BYTES:
+            # refuse before buffering: a multi-GB declared body would
+            # otherwise be read fully before the JSON parse rejects it
+            raise ApiError(413, "request body too large")
         try:
             data = json.loads(self.rfile.read(length).decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
+        except (ValueError, UnicodeDecodeError, RecursionError):
             raise ApiError(400, "invalid JSON body") from None
         if not isinstance(data, dict):
             raise ApiError(400, "JSON object body required")
@@ -543,21 +577,36 @@ class Handler(BaseHTTPRequestHandler):
 
     def _vendors_post(self) -> None:
         body = self._body()
-        name = (body.get("name") or "").strip()
-        code = (body.get("code") or "").strip()
+        name = _str_field(body.get("name"), "name").strip()
+        code = _str_field(body.get("code"), "code").strip()
         if not name or not code:
             raise ApiError(400, "name and code required")
-        self._json(
-            201,
-            store.create_vendor(name, code, body.get("maza_address", ""), body.get("notes", "")),
-        )
+        try:
+            vendor = store.create_vendor(
+                name,
+                code,
+                _str_field(body.get("maza_address", ""), "maza_address"),
+                _str_field(body.get("notes", ""), "notes"),
+            )
+        except sqlite3.IntegrityError:
+            # codes are UNIQUE: a re-POST of an existing code is a conflict,
+            # not an unhandled 500
+            raise ApiError(409, f"vendor code {code!r} already exists") from None
+        self._json(201, vendor)
 
     def _vendors_get(self) -> None:
         self._json(200, {"vendors": store.list_vendors()})
 
     def _orders_post(self) -> None:
         body = self._body()
-        self._json(201, create_order(body.get("usd_amount"), body.get("ref", ""), body.get("vendor_id", "")))
+        self._json(
+            201,
+            create_order(
+                body.get("usd_amount"),
+                _str_field(body.get("ref", ""), "ref"),
+                _str_field(body.get("vendor_id", ""), "vendor_id"),
+            ),
+        )
 
     def _order_get(self, order_id: str) -> None:
         order = store.get_order(order_id)

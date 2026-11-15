@@ -36,10 +36,26 @@ MAZA quantity, locked rate, rate source, and chain txid.
 import csv
 import datetime
 import os
+import re
 import uuid
 from typing import Any, Dict, List
 
 from . import config, store
+
+# Spreadsheet formula injection: a cell whose text begins with '=', '+', '-'
+# or '@' is evaluated as a formula by Excel/LibreOffice on open. MIP import
+# rows carry operator/member-supplied text (vendor names, refs, txids), so
+# every emitted cell is neutralized with the standard leading apostrophe —
+# except plain numbers (AMOUNT/FX_RATE), which are always safe.
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
+_PLAIN_NUMBER = re.compile(r"-?(?:\d+(?:\.\d+)?|\.\d+)")
+
+
+def _safe_cell(value: Any) -> str:
+    text = value if isinstance(value, str) else str(value)
+    if text.startswith(_FORMULA_PREFIXES) and not _PLAIN_NUMBER.fullmatch(text):
+        return "'" + text
+    return text
 
 
 def _trx_date(ts: Any) -> str:
@@ -90,7 +106,7 @@ def _rows(orders: List[Dict[str, Any]], columns: List[str]) -> List[Dict[str, st
             "FX_RATE": "1.0000",
             "DESCRIPTION": _desc(o),
         }
-        out.append({col: row.get(col, "") for col in columns})
+        out.append({col: _safe_cell(row.get(col, "")) for col in columns})
     return out
 
 
