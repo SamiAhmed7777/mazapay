@@ -1,0 +1,15 @@
+== S1: fresh install, happy path
+== S2: rerun preserves env file and token
+== S3: upgrade, health fails, rollback restores prior release (exit 1)
+== S4: rollback itself fails (restart broken) -> exit 2 + FATAL
+== S5: corrupt source tree -> abort 3, nothing mutated
+== S6: caddy reload fails once -> file restored + reloaded (exit 1)
+== S6b: rollback-time caddy validation fails -> live file left untouched (exit 2)
+== S7a: legacy nohup (ours) retired
+== S7b: port held by FOREIGN process -> left alone, deploy proceeds
+== S8: candidate caddy validation fails -> clean rollback (exit 1)
+== S9: foreign process holds 8443 -> abort 3
+== S10: existing env + rpc conf mismatch -> env preserved on abort
+
+assertions: 78 passed, 0 failed
+BATTERY_RC=0

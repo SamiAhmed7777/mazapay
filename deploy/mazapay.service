@@ -1,11 +1,9 @@
 # MazaPay bridge systemd unit.
-# Install:  sudo cp deploy/mazapay.service /etc/systemd/system/
-#           sudo systemctl daemon-reload && sudo systemctl enable --now mazapay
-# Secrets (token, wallet RPC credentials) belong in /etc/mazapay.env (0600):
-#   MAZAPAY_API_TOKEN=...
-#   MAZAPAY_MAZAD_RPC=http://127.0.0.1:<rpcport>
-#   MAZAPAY_MAZAD_RPC_USER=...
-#   MAZAPAY_MAZAD_RPC_PASSWORD=...
+# Installed by deploy/service/install-bridge.sh (staged release dirs:
+# /opt/mazapay/releases/<epoch>, symlink /opt/mazapay/current).
+# Secrets (token, wallet RPC credentials) live in /etc/mazapay.env (0600),
+# assembled in-process by the installer from /var/lib/mazad/maza.conf —
+# they are never written into this repo or printed to a transcript.
 
 [Unit]
 Description=MazaPay bridge — MazaCoin payments into MIP Fund Accounting
@@ -16,8 +14,13 @@ Wants=network-online.target
 Type=simple
 User=mazapay
 Group=mazapay
-WorkingDirectory=/opt/mazapay
+WorkingDirectory=/opt/mazapay/current
 EnvironmentFile=-/etc/mazapay.env
+# Explicit bind, loopback-only behind the Caddy TLS proxy (audit 4.3):
+# the per-IP order cap trusts X-Forwarded-For only because the listener
+# is loopback-bound.
+Environment=MAZAPAY_HOST=127.0.0.1
+Environment=MAZAPAY_PORT=8443
 # Production data paths (override dev defaults from config.py);
 # StateDirectory provisions /var/lib/mazapay with correct ownership.
 Environment=MAZAPAY_DB=/var/lib/mazapay/mazapay.sqlite3
@@ -27,12 +30,22 @@ ExecStartPre=/usr/bin/mkdir -p /var/lib/mazapay/mip
 ExecStart=/usr/bin/python3 -m mazapay.api
 Restart=always
 RestartSec=3
-# POST /payments spends from the wallet — run it as its own user, no shell
+# POST /payments spends from the wallet — run as its own user, no shell,
+# no capabilities, no kernel/control-group surface.
 NoNewPrivileges=true
 ProtectSystem=strict
 PrivateTmp=true
 ProtectHome=true
 ReadWritePaths=/var/lib/mazapay
+UMask=0077
+ProtectClock=true
+RestrictNamespaces=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 
 [Install]
 WantedBy=multi-user.target
