@@ -1,3 +1,11 @@
+# mazapay deploy/service evidence transcript (FULL)
+host: vmi3080415
+captured_utc: 2026-11-18T12:37:38Z
+tree_head: d8faba010a2014866e8d1f3f6465d78ca2b7d681
+
+$ bash deploy/service/test-install-bridge.sh   [FULL stdout+stderr follows]
+--- BEGIN battery output ---
+== S0: cross-file consistency — unit MAZAPAY_PORT == installer LISTEN_PORT
 == S1: fresh install, happy path
 == S2: rerun preserves env file and token
 == S3: upgrade, health fails, rollback restores prior release (exit 1)
@@ -8,8 +16,312 @@
 == S7a: legacy nohup (ours) retired
 == S7b: port held by FOREIGN process -> left alone, deploy proceeds
 == S8: candidate caddy validation fails -> clean rollback (exit 1)
-== S9: foreign process holds 8443 -> abort 3
+== S9: foreign process holds the listen port (loopback) -> abort 3
+== S9b: WILDCARD holder on the listen port (binds loopback too) -> abort 3
 == S10: existing env + rpc conf mismatch -> env preserved on abort
+== S10b: ROTATED rpc password + existing env -> preservation abort, env byte-identical (candidate checked, live file never mutated)
+== S10c: FRESH install + post-env failure -> rollback REMOVES the fresh env (no orphan secrets file)
+== S11: caddy-guard registration — block lands in BOTH state files, rerun idempotent
+== S11b: no caddy-guard on host (dir absent) -> graceful skip, deploy proceeds
+== S12: installed vhost block byte-identical to guard registration
+== S13: fresh host — missing caddy log dir is created, deploy proceeds
+== S14: guard-restored BARE block (no markers) -> replaced, not duplicated
+== S15: portability override — endpoint/domain flow from env (Maza-owned VPS path)
+== S16: portability gate is live — planted violation caught, errors fail
 
-assertions: 78 passed, 0 failed
+assertions: 187 passed, 0 failed
 BATTERY_RC=0
+--- END battery output ---
+BATTERY_EXIT=0
+
+$ python3 -m unittest discover -s tests -v   [FULL verbose output follows: one line per test]
+--- BEGIN suite output ---
+test_admin_full_txid_in_title_attribute (test_admin.TestAdminDashboard.test_admin_full_txid_in_title_attribute) ... ok
+test_admin_html_escapes_operator_controlled_fields (test_admin.TestAdminDashboard.test_admin_html_escapes_operator_controlled_fields) ... ok
+test_admin_html_shape_and_rows (test_admin.TestAdminDashboard.test_admin_html_shape_and_rows) ... ok
+test_admin_json_filters (test_admin.TestAdminDashboard.test_admin_json_filters) ... ok
+test_admin_json_limit_bounds_page (test_admin.TestAdminDashboard.test_admin_json_limit_bounds_page) ... ok
+test_admin_json_shape_and_counts (test_admin.TestAdminDashboard.test_admin_json_shape_and_counts) ... ok
+test_admin_parameter_refusals (test_admin.TestAdminDashboard.test_admin_parameter_refusals) ... ok
+test_admin_requires_bearer_token (test_admin.TestAdminDashboard.test_admin_requires_bearer_token) ... ok
+test_admin_unknown_query_params_ignored (test_admin.TestAdminDashboard.test_admin_unknown_query_params_ignored)
+Contract: unknown query params are silently ignored (the _admin_query ... ok
+test_basic_auth_browser_flow (test_admin.TestAdminDashboard.test_basic_auth_browser_flow)
+Browsers prompt for Basic natively — the non-CLI operator path. ... ok
+test_odd_values_pass_through_as_strings (test_admin.TestFmtTsOddInputs.test_odd_values_pass_through_as_strings) ... ok
+test_representative_odd_values_do_not_raise (test_admin.TestFmtTsOddInputs.test_representative_odd_values_do_not_raise) ... ok
+test_valid_epochs_format (test_admin.TestFmtTsOddInputs.test_valid_epochs_format) ... ok
+test_build_notifiers_matrix (test_alerts.TestNotifierChannels.test_build_notifiers_matrix) ... ok
+test_log_notifier_never_fails (test_alerts.TestNotifierChannels.test_log_notifier_never_fails) ... ok
+test_log_notifier_writes_structured_line (test_alerts.TestNotifierChannels.test_log_notifier_writes_structured_line) ... ok
+test_webhook_carries_token_and_timeout (test_alerts.TestNotifierChannels.test_webhook_carries_token_and_timeout) ... ok
+test_webhook_refused_connection_returns_false (test_alerts.TestNotifierChannels.test_webhook_refused_connection_returns_false) ... ok
+test_alert_payload_shape_is_json_safe (test_alerts.TestWatcherAlerts.test_alert_payload_shape_is_json_safe) ... ok
+test_both_alerts_fire_on_a_fully_confirmed_deposit (test_alerts.TestWatcherAlerts.test_both_alerts_fire_on_a_fully_confirmed_deposit) ... ok
+test_confirm_alert_exactly_once_across_restarts (test_alerts.TestWatcherAlerts.test_confirm_alert_exactly_once_across_restarts) ... ok
+test_counts_keys_stay_backward_compatible (test_alerts.TestWatcherAlerts.test_counts_keys_stay_backward_compatible) ... ok
+test_deposit_alert_fires_pre_confirmation_and_is_not_repeated (test_alerts.TestWatcherAlerts.test_deposit_alert_fires_pre_confirmation_and_is_not_repeated) ... ok
+test_disabled_alerts_leave_watcher_behaviour_unchanged (test_alerts.TestWatcherAlerts.test_disabled_alerts_leave_watcher_behaviour_unchanged) ... ok
+test_late_paid_order_gets_both_alerts (test_alerts.TestWatcherAlerts.test_late_paid_order_gets_both_alerts) ... ok
+test_partial_deposit_below_quote_does_not_alert (test_alerts.TestWatcherAlerts.test_partial_deposit_below_quote_does_not_alert) ... ok
+test_undelivered_deposit_alert_retries_until_a_channel_accepts (test_alerts.TestWatcherAlerts.test_undelivered_deposit_alert_retries_until_a_channel_accepts) ... ok
+test_500_is_undelivered_then_recovers_without_duplicates (test_alerts.TestWebhookDelivery.test_500_is_undelivered_then_recovers_without_duplicates) ... ok
+test_delivered_alerts_post_json_with_bearer_token (test_alerts.TestWebhookDelivery.test_delivered_alerts_post_json_with_bearer_token) ... ok
+test_main_json_ready_exit_zero (test_check_daemon.TestCli.test_main_json_ready_exit_zero) ... ok
+test_main_not_ready_exit_one (test_check_daemon.TestCli.test_main_not_ready_exit_one) ... ok
+test_read_conf_parses_rpc_settings (test_check_daemon.TestConf.test_read_conf_parses_rpc_settings) ... ok
+test_checker_with_creds_in_url_reaches_server (test_check_daemon.TestCredsInUrl.test_checker_with_creds_in_url_reaches_server) ... ok
+test_http_401_classified_as_auth (test_check_daemon.TestCredsInUrl.test_http_401_classified_as_auth)
+A real HTTP 401 must surface as a credential problem, not a ... ok
+test_json_output_is_pure_json_with_conf (test_check_daemon.TestCredsInUrl.test_json_output_is_pure_json_with_conf) ... ok
+test_mazadrpc_url_only_config_works (test_check_daemon.TestCredsInUrl.test_mazadrpc_url_only_config_works)
+MazadRPC with ONLY a creds-in-URL (no user/password args) must ... ok
+test_mazadrpc_with_creds_in_url_reaches_server (test_check_daemon.TestCredsInUrl.test_mazadrpc_with_creds_in_url_reaches_server) ... ok
+test_mask_url_hides_password (test_check_daemon.TestMasking.test_mask_url_hides_password) ... ok
+test_mask_url_with_reserved_characters (test_check_daemon.TestMasking.test_mask_url_with_reserved_characters) ... ok
+test_mask_url_without_credentials_unchanged (test_check_daemon.TestMasking.test_mask_url_without_credentials_unchanged) ... ok
+test_all_pass_is_ready (test_check_daemon.TestRunChecks.test_all_pass_is_ready) ... ok
+test_auth_failure_advises_conf_check (test_check_daemon.TestRunChecks.test_auth_failure_advises_conf_check) ... ok
+test_locked_wallet_stops_with_unlock_advice (test_check_daemon.TestRunChecks.test_locked_wallet_stops_with_unlock_advice) ... ok
+test_probe_never_sends_funds (test_check_daemon.TestRunChecks.test_probe_never_sends_funds)
+The sendtoaddress probe must use invalid args (amount -1). ... ok
+test_sendtoaddress_method_missing_fails_ready (test_check_daemon.TestRunChecks.test_sendtoaddress_method_missing_fails_ready) ... ok
+test_unreachable_stops_early (test_check_daemon.TestRunChecks.test_unreachable_stops_early) ... ok
+test_validateaddress_missing_blocks_ready (test_check_daemon.TestRunChecks.test_validateaddress_missing_blocks_ready)
+The bridge calls validateaddress before every payment - the checker ... ok
+test_zero_balance_warns_but_ready (test_check_daemon.TestRunChecks.test_zero_balance_warns_but_ready) ... ok
+test_build_url_encoded_creds_authenticate_end_to_end (test_check_daemon.TestTrickyCredentials.test_build_url_encoded_creds_authenticate_end_to_end) ... ok
+test_conf_path_tricky_credentials_strict_server_full_matrix (test_check_daemon.TestTrickyCredentials.test_conf_path_tricky_credentials_strict_server_full_matrix)
+maza.conf autodetection path across the FULL tricky matrix: each ... ok
+test_mask_never_leaks_tricky_passwords (test_check_daemon.TestTrickyCredentials.test_mask_never_leaks_tricky_passwords) ... ok
+test_read_conf_tolerates_percent_password (test_check_daemon.TestTrickyCredentials.test_read_conf_tolerates_percent_password) ... ok
+test_brand_lockup_and_palette (test_checkout_ui.TestCheckoutPageStructure.test_brand_lockup_and_palette) ... ok
+test_four_state_progress_and_receipt_panel (test_checkout_ui.TestCheckoutPageStructure.test_four_state_progress_and_receipt_panel) ... ok
+test_hierarchy_and_footer (test_checkout_ui.TestCheckoutPageStructure.test_hierarchy_and_footer) ... ok
+test_no_external_origins_or_data_uris (test_checkout_ui.TestCheckoutPageStructure.test_no_external_origins_or_data_uris) ... ok
+test_brand_red_is_not_used_for_text (test_checkout_ui.TestContrastMatrix.test_brand_red_is_not_used_for_text)
+--red on any page surface is below 4.5:1, so it must not carry copy. ... ok
+test_literal_pair_contrast_floor (test_checkout_ui.TestContrastMatrix.test_literal_pair_contrast_floor) ... ok
+test_text_contrast_floor (test_checkout_ui.TestContrastMatrix.test_text_contrast_floor) ... ok
+test_tokens_captured (test_checkout_ui.TestContrastMatrix.test_tokens_captured) ... ok
+test_ui_component_contrast_floor (test_checkout_ui.TestContrastMatrix.test_ui_component_contrast_floor) ... ok
+test_every_whitelisted_asset_is_served_as_png (test_checkout_ui.TestStaticRoute.test_every_whitelisted_asset_is_served_as_png) ... ok
+test_favicon_serves_the_coin_roundel (test_checkout_ui.TestStaticRoute.test_favicon_serves_the_coin_roundel) ... ok
+test_page_is_public_and_still_carries_the_old_pin (test_checkout_ui.TestStaticRoute.test_page_is_public_and_still_carries_the_old_pin) ... ok
+test_static_route_is_public_even_in_token_mode (test_checkout_ui.TestStaticRoute.test_static_route_is_public_even_in_token_mode) ... ok
+test_unknown_and_traversal_names_are_404 (test_checkout_ui.TestStaticRoute.test_unknown_and_traversal_names_are_404) ... /root/.hermes/tools/python-3.14.9+20261021-linux-x64/lib/python3.14/tempfile.py:538: ResourceWarning: Implicitly cleaning up <HTTPError 404: 'Not Found'>
+  _warnings.warn(self.warn_message, ResourceWarning)
+ok
+test_assets_present_and_byte_identical (test_checkout_ui.TestVendoredAssets.test_assets_present_and_byte_identical) ... ok
+test_page_references_only_whitelisted_assets (test_checkout_ui.TestVendoredAssets.test_page_references_only_whitelisted_assets) ... ok
+test_export_stays_parseable_after_barrage (test_fuzz.TestFuzzApiHttp.test_export_stays_parseable_after_barrage) ... ok
+test_garbage_bodies_never_500 (test_fuzz.TestFuzzApiHttp.test_garbage_bodies_never_500) ... ok
+test_oversized_declared_body_is_413 (test_fuzz.TestFuzzApiHttp.test_oversized_declared_body_is_413)
+A declared Content-Length over the cap is refused before buffering. ... ok
+test_pinned_regressions_are_4xx (test_fuzz.TestFuzzApiHttp.test_pinned_regressions_are_4xx) ... ok
+test_raw_and_malformed_framing (test_fuzz.TestFuzzApiHttp.test_raw_and_malformed_framing) ... ok
+test_weird_paths_stay_4xx (test_fuzz.TestFuzzApiHttp.test_weird_paths_stay_4xx) ... ok
+test_corpus (test_fuzz.TestFuzzConfirmations.test_corpus) ... ok
+test_pinned_regressions (test_fuzz.TestFuzzConfirmations.test_pinned_regressions) ... ok
+test_random_strings_fixed_seed (test_fuzz.TestFuzzConfirmations.test_random_strings_fixed_seed) ... ok
+test_amount_column_stays_numeric (test_fuzz.TestFuzzMipExport.test_amount_column_stays_numeric) ... ok
+test_hostile_receipt_export_is_neutralized (test_fuzz.TestFuzzMipExport.test_hostile_receipt_export_is_neutralized) ... ok
+test_rows_never_lose_or_invent_columns (test_fuzz.TestFuzzMipExport.test_rows_never_lose_or_invent_columns) ... ok
+test_rows_random_hostile_text_fixed_seed (test_fuzz.TestFuzzMipExport.test_rows_random_hostile_text_fixed_seed) ... ok
+test_lore_poisoned_shapes (test_fuzz.TestFuzzPricingParsers.test_lore_poisoned_shapes) ... ok
+test_paprika_poisoned_shapes (test_fuzz.TestFuzzPricingParsers.test_paprika_poisoned_shapes) ... ok
+test_paprika_random_payloads_fixed_seed (test_fuzz.TestFuzzPricingParsers.test_paprika_random_payloads_fixed_seed) ... ok
+test_pinned_regressions (test_fuzz.TestFuzzPricingParsers.test_pinned_regressions) ... ok
+test_quote_maza_garbage_amounts (test_fuzz.TestFuzzPricingParsers.test_quote_maza_garbage_amounts) ... ok
+test_quote_maza_garbage_prices (test_fuzz.TestFuzzPricingParsers.test_quote_maza_garbage_prices) ... ok
+test_audit_still_append_only_after_barrage (test_fuzz.TestFuzzStore.test_audit_still_append_only_after_barrage) ... ok
+test_create_order_garbage_amounts_fail_clean (test_fuzz.TestFuzzStore.test_create_order_garbage_amounts_fail_clean) ... ok
+test_get_order_injection_strings (test_fuzz.TestFuzzStore.test_get_order_injection_strings) ... ok
+test_transition_garbage_statuses_fail_clean (test_fuzz.TestFuzzStore.test_transition_garbage_statuses_fail_clean) ... ok
+test_update_order_garbage_keys_are_atomic (test_fuzz.TestFuzzStore.test_update_order_garbage_keys_are_atomic) ... ok
+test_corpus (test_fuzz.TestFuzzUsdAmount.test_corpus) ... ok
+test_pinned_regressions (test_fuzz.TestFuzzUsdAmount.test_pinned_regressions) ... ok
+test_random_strings_fixed_seed (test_fuzz.TestFuzzUsdAmount.test_random_strings_fixed_seed) ... ok
+test_access_log_line_has_request_shape_and_never_the_token (test_hardening.TestHardeningHttp.test_access_log_line_has_request_shape_and_never_the_token) ... ok
+test_access_log_xff_first_hop_recorded (test_hardening.TestHardeningHttp.test_access_log_xff_first_hop_recorded) ... ok
+test_bounded_concurrent_connections_503 (test_hardening.TestHardeningHttp.test_bounded_concurrent_connections_503) ... ok
+test_caps_do_not_apply_to_tokened_disburse (test_hardening.TestHardeningHttp.test_caps_do_not_apply_to_tokened_disburse) ... ok
+test_disburse_ceiling_400_before_intent_row (test_hardening.TestHardeningHttp.test_disburse_ceiling_400_before_intent_row) ... ok
+test_global_awaiting_cap_429_with_retry_after (test_hardening.TestHardeningHttp.test_global_awaiting_cap_429_with_retry_after) ... ok
+test_malformed_content_length_is_400_not_500 (test_hardening.TestHardeningHttp.test_malformed_content_length_is_400_not_500) ... ok
+test_non_ascii_authorization_header_is_401_not_dropped (test_hardening.TestHardeningHttp.test_non_ascii_authorization_header_is_401_not_dropped) ... ok
+test_per_ip_awaiting_cap_429_with_retry_after (test_hardening.TestHardeningHttp.test_per_ip_awaiting_cap_429_with_retry_after) ... ok
+test_per_ip_cap_is_per_forwarded_for_not_per_socket (test_hardening.TestHardeningHttp.test_per_ip_cap_is_per_forwarded_for_not_per_socket) ... ok
+test_per_order_usd_ceiling_400 (test_hardening.TestHardeningHttp.test_per_order_usd_ceiling_400) ... ok
+test_ref_formula_payload_is_400 (test_hardening.TestHardeningHttp.test_ref_formula_payload_is_400) ... ok
+test_ref_overlong_and_control_chars_are_400 (test_hardening.TestHardeningHttp.test_ref_overlong_and_control_chars_are_400) ... ok
+test_ref_valid_formats_still_201 (test_hardening.TestHardeningHttp.test_ref_valid_formats_still_201) ... ok
+test_request_body_read_timeout_is_408 (test_hardening.TestHardeningHttp.test_request_body_read_timeout_is_408) ... ok
+test_security_headers_on_html_and_json (test_hardening.TestHardeningHttp.test_security_headers_on_html_and_json) ... ok
+test_server_header_has_no_version_banner (test_hardening.TestHardeningHttp.test_server_header_has_no_version_banner) ... ok
+test_busy_timeout_per_connection (test_hardening.TestStoreHardening.test_busy_timeout_per_connection) ... ok
+test_client_ip_survives_store_roundtrip (test_hardening.TestStoreHardening.test_client_ip_survives_store_roundtrip) ... ok
+test_count_awaiting_global_and_per_ip (test_hardening.TestStoreHardening.test_count_awaiting_global_and_per_ip) ... ok
+test_wal_journal_mode_enabled (test_hardening.TestStoreHardening.test_wal_journal_mode_enabled) ... ok
+test_cas_flip_loses_race_skips_confirm_dispatch (test_hardening.TestWatcherSingleFlightAndCas.test_cas_flip_loses_race_skips_confirm_dispatch)
+A pass holding the SAME stale pre-flip snapshot cannot re-flip. ... ok
+test_concurrent_polls_cannot_double_alert_or_double_flip (test_hardening.TestWatcherSingleFlightAndCas.test_concurrent_polls_cannot_double_alert_or_double_flip) ... ok
+test_late_paid_flip_is_cas_too (test_hardening.TestWatcherSingleFlightAndCas.test_late_paid_flip_is_cas_too) ... ok
+test_poll_once_is_single_flight (test_hardening.TestWatcherSingleFlightAndCas.test_poll_once_is_single_flight)
+A pass starting while another holds the poll lock skips cleanly. ... ok
+test_accept_only_for_late_paid (test_mazapay.TestApiEndToEnd.test_accept_only_for_late_paid) ... ok
+test_concurrent_accept_and_refund_single_winner (test_mazapay.TestApiEndToEnd.test_concurrent_accept_and_refund_single_winner) ... ok
+test_concurrent_reconcile_keeps_superseded_terminal (test_mazapay.TestApiEndToEnd.test_concurrent_reconcile_keeps_superseded_terminal) ... ok
+test_concurrent_refund_pays_exactly_once (test_mazapay.TestApiEndToEnd.test_concurrent_refund_pays_exactly_once) ... ok
+test_concurrent_retry_broadcasts_exactly_once (test_mazapay.TestApiEndToEnd.test_concurrent_retry_broadcasts_exactly_once) ... ok
+test_disburse_intent_first_then_sent (test_mazapay.TestApiEndToEnd.test_disburse_intent_first_then_sent) ... ok
+test_error_paths (test_mazapay.TestApiEndToEnd.test_error_paths) ... ok
+test_full_collect_flow (test_mazapay.TestApiEndToEnd.test_full_collect_flow) ... ok
+test_invalid_address_rejected (test_mazapay.TestApiEndToEnd.test_invalid_address_rejected) ... ok
+test_late_payment_accept_and_refund (test_mazapay.TestApiEndToEnd.test_late_payment_accept_and_refund) ... ok
+test_malformed_inputs_return_400 (test_mazapay.TestApiEndToEnd.test_malformed_inputs_return_400) ... ok
+test_pre_broadcast_failure_retries_once_and_refuses_more (test_mazapay.TestApiEndToEnd.test_pre_broadcast_failure_retries_once_and_refuses_more) ... ok
+test_reconcile_versus_retry_race_stays_consistent (test_mazapay.TestApiEndToEnd.test_reconcile_versus_retry_race_stays_consistent)
+Reconcile (proves absent + supersedes) racing a retry (claims + broadcasts). ... ok
+test_refund_proven_absent_releases_parent_to_late_paid (test_mazapay.TestApiEndToEnd.test_refund_proven_absent_releases_parent_to_late_paid) ... ok
+test_refund_returns_original_locked_amount_when_price_moves (test_mazapay.TestApiEndToEnd.test_refund_returns_original_locked_amount_when_price_moves) ... ok
+test_rpc_scan_failure_keeps_send_uncertain (test_mazapay.TestApiEndToEnd.test_rpc_scan_failure_keeps_send_uncertain) ... ok
+test_rpc_timeout_after_broadcast_reconciles_without_duplicate (test_mazapay.TestApiEndToEnd.test_rpc_timeout_after_broadcast_reconciles_without_duplicate) ... ok
+test_uncertain_refund_reconciled_sent_settles_parent (test_mazapay.TestApiEndToEnd.test_uncertain_refund_reconciled_sent_settles_parent) ... ok
+test_open_mode_when_no_token (test_mazapay.TestAuth.test_open_mode_when_no_token) ... ok
+test_token_required_on_mutating_and_read_routes (test_mazapay.TestAuth.test_token_required_on_mutating_and_read_routes) ... ok
+test_adopt_race_with_multirow_session (test_mazapay.TestMipExport.test_adopt_race_with_multirow_session) ... ok
+test_cash_disbursements_csv (test_mazapay.TestMipExport.test_cash_disbursements_csv) ... ok
+test_cash_receipts_csv (test_mazapay.TestMipExport.test_cash_receipts_csv) ... ok
+test_claimed_row_whose_status_left_export_set_is_released (test_mazapay.TestMipExport.test_claimed_row_whose_status_left_export_set_is_released) ... ok
+test_concurrent_adopt_stale_claim_single_winner (test_mazapay.TestMipExport.test_concurrent_adopt_stale_claim_single_winner) ... ok
+test_concurrent_exporters_partition_rows (test_mazapay.TestMipExport.test_concurrent_exporters_partition_rows) ... ok
+test_crash_after_write_before_finalize_rewrites_same_file (test_mazapay.TestMipExport.test_crash_after_write_before_finalize_rewrites_same_file) ... ok
+test_crash_between_claim_and_write_resumes_same_session (test_mazapay.TestMipExport.test_crash_between_claim_and_write_resumes_same_session) ... ok
+test_reexport_contains_no_new_rows (test_mazapay.TestMipExport.test_reexport_contains_no_new_rows) ... ok
+test_pre_broadcast_failure_sends_nothing (test_mazapay.TestMockChain.test_pre_broadcast_failure_sends_nothing) ... ok
+test_received_filters_by_confirmations (test_mazapay.TestMockChain.test_received_filters_by_confirmations) ... ok
+test_scan_depth_uses_configured_limit (test_mazapay.TestMockChain.test_scan_depth_uses_configured_limit) ... ok
+test_scan_failure_raises_never_returns_absent (test_mazapay.TestMockChain.test_scan_failure_raises_never_returns_absent) ... ok
+test_sendtoaddress_records_outflow (test_mazapay.TestMockChain.test_sendtoaddress_records_outflow) ... ok
+test_timeout_after_broadcast_records_the_send (test_mazapay.TestMockChain.test_timeout_after_broadcast_records_the_send) ... ok
+test_failed_primary_raises_without_explicit_allowance (test_mazapay.TestPricing.test_failed_primary_raises_without_explicit_allowance) ... ok
+test_paprika_parse_live_shape (test_mazapay.TestPricing.test_paprika_parse_live_shape) ... ok
+test_quote_decimal_rounds_down (test_mazapay.TestPricing.test_quote_decimal_rounds_down) ... ok
+test_quote_math_fixed_price (test_mazapay.TestPricing.test_quote_math_fixed_price) ... ok
+test_rejects_nonpositive (test_mazapay.TestPricing.test_rejects_nonpositive) ... ok
+test_synthetic_fallback_is_auditable_when_allowed (test_mazapay.TestPricing.test_synthetic_fallback_is_auditable_when_allowed) ... ok
+test_mock_mode_needs_no_token (test_mazapay.TestRealModeGuards.test_mock_mode_needs_no_token) ... ok
+test_real_wallet_with_fixed_price_refused_unless_allowed (test_mazapay.TestRealModeGuards.test_real_wallet_with_fixed_price_refused_unless_allowed) ... ok
+test_real_wallet_without_token_refused (test_mazapay.TestRealModeGuards.test_real_wallet_without_token_refused) ... ok
+test_audit_is_append_only_at_schema_level (test_mazapay.TestStore.test_audit_is_append_only_at_schema_level) ... ok
+test_export_state_tracking (test_mazapay.TestStore.test_export_state_tracking) ... ok
+test_order_lifecycle_and_expiry (test_mazapay.TestStore.test_order_lifecycle_and_expiry) ... ok
+test_unique_disbursement_nonce (test_mazapay.TestStore.test_unique_disbursement_nonce) ... ok
+test_vendor_roundtrip (test_mazapay.TestStore.test_vendor_roundtrip) ... ok
+test_late_payment_reaches_late_paid_not_dropped (test_mazapay.TestWatcher.test_late_payment_reaches_late_paid_not_dropped) ... ok
+test_paid_at_required_confirmations_with_txid (test_mazapay.TestWatcher.test_paid_at_required_confirmations_with_txid) ... ok
+test_pending_not_paid_below_confirmations (test_mazapay.TestWatcher.test_pending_not_paid_below_confirmations) ... ok
+test_all_live_fail_allow_fixed_keeps_fallback_label (test_price_feed.PriceFeedFailoverTests.test_all_live_fail_allow_fixed_keeps_fallback_label) ... ok
+test_all_live_fail_raises_without_fixed (test_price_feed.PriceFeedFailoverTests.test_all_live_fail_raises_without_fixed) ... ok
+test_feed_error_is_capped (test_price_feed.PriceFeedFailoverTests.test_feed_error_is_capped) ... ok
+test_feed_health_shape_and_failover_order (test_price_feed.PriceFeedFailoverTests.test_feed_health_shape_and_failover_order) ... ok
+test_fixed_primary_probes_nothing (test_price_feed.PriceFeedFailoverTests.test_fixed_primary_probes_nothing) ... ok
+test_lore_primary_fails_paprika_serves (test_price_feed.PriceFeedFailoverTests.test_lore_primary_fails_paprika_serves) ... ok
+test_paprika_fail_lore_serves_with_honest_label (test_price_feed.PriceFeedFailoverTests.test_paprika_fail_lore_serves_with_honest_label) ... ok
+test_quote_maza_carries_failover_source (test_price_feed.PriceFeedFailoverTests.test_quote_maza_carries_failover_source) ... ok
+test_unconfigured_lore_is_skipped_not_attempted (test_price_feed.PriceFeedFailoverTests.test_unconfigured_lore_is_skipped_not_attempted) ... ok
+test_actual_mask_is_the_only_iso_match (test_qr.TestMatrixStructure.test_actual_mask_is_the_only_iso_match)
+Exactly one mask's format field matches the matrix — and it is ... ok
+test_dark_module_always_dark (test_qr.TestMatrixStructure.test_dark_module_always_dark) ... ok
+test_finder_patterns_and_separators (test_qr.TestMatrixStructure.test_finder_patterns_and_separators) ... ok
+test_format_info_matches_iso_recomputation (test_qr.TestMatrixStructure.test_format_info_matches_iso_recomputation)
+The 15-bit format fields equal the independently recomputed ... ok
+test_size_is_valid_version_geometry (test_qr.TestMatrixStructure.test_size_is_valid_version_geometry) ... ok
+test_timing_patterns_alternate (test_qr.TestMatrixStructure.test_timing_patterns_alternate) ... ok
+test_amount_from_float_real (test_qr.TestPaymentUri.test_amount_from_float_real) ... ok
+test_basic_address_and_amount (test_qr.TestPaymentUri.test_basic_address_and_amount) ... ok
+test_eight_decimals_bounded (test_qr.TestPaymentUri.test_eight_decimals_bounded) ... ok
+test_empty_address_rejected (test_qr.TestPaymentUri.test_empty_address_rejected) ... ok
+test_none_amount_omits_param (test_qr.TestPaymentUri.test_none_amount_omits_param) ... ok
+test_trailing_zeros_stripped_not_exponent (test_qr.TestPaymentUri.test_trailing_zeros_stripped_not_exponent) ... ok
+test_checkout_page_qr_degrade_and_prefix_alt (test_qr.TestQrEndpoint.test_checkout_page_qr_degrade_and_prefix_alt)
+QR polish follow-ups (ed652fc verdict): the checkout page must not ... ok
+test_qr_happy_path_headers_and_body (test_qr.TestQrEndpoint.test_qr_happy_path_headers_and_body) ... ok
+test_qr_outbound_hidden_without_token (test_qr.TestQrEndpoint.test_qr_outbound_hidden_without_token) ... ok
+test_qr_unknown_order_404 (test_qr.TestQrEndpoint.test_qr_unknown_order_404) ... ok
+test_deterministic (test_qr.TestSvgRenderer.test_deterministic) ... ok
+test_distinct_payloads_distinct_svgs (test_qr.TestSvgRenderer.test_distinct_payloads_distinct_svgs) ... ok
+test_empty_payload_rejected (test_qr.TestSvgRenderer.test_empty_payload_rejected) ... ok
+test_golden_regression_hash (test_qr.TestSvgRenderer.test_golden_regression_hash)
+Renderer regression guard (not an independent-correctness proof): ... ok
+test_rect_count_equals_dark_modules (test_qr.TestSvgRenderer.test_rect_count_equals_dark_modules) ... ok
+test_wellformed_xml_single_path (test_qr.TestSvgRenderer.test_wellformed_xml_single_path) ... ok
+test_mit_license_header_intact (test_qr.TestVendorProvenance.test_mit_license_header_intact) ... ok
+test_vendored_bytes_match_upstream_pin (test_qr.TestVendorProvenance.test_vendored_bytes_match_upstream_pin) ... ok
+test_clean_svg_still_decodes (test_qr_decode.TestDamageDetection.test_clean_svg_still_decodes)
+Sanity guard for the mutation tests: the unmutated document decodes. ... /root/mazapay/mazapay/qrdecode.py:77: ResourceWarning: unclosed database in <sqlite3.Connection object at 0x758b8fce5c60>
+  seen.add((x, y))
+ResourceWarning: Enable tracemalloc to get the object allocation traceback
+ok
+test_flipped_data_module_rejected (test_qr_decode.TestDamageDetection.test_flipped_data_module_rejected)
+Remove one dark codeword-carrying module (first non-function module ... ok
+test_flipped_format_module_rejected (test_qr_decode.TestDamageDetection.test_flipped_format_module_rejected)
+Remove one DARK format-info module (first placement) → the BCH(15,5) ... ok
+test_bad_sizes_rejected (test_qr_decode.TestDecodeMatrixInput.test_bad_sizes_rejected) ... ok
+test_blank_matrix_rejected (test_qr_decode.TestDecodeMatrixInput.test_blank_matrix_rejected) ... ok
+test_ragged_matrix_rejected (test_qr_decode.TestDecodeMatrixInput.test_ragged_matrix_rejected) ... ok
+test_exp_log_tables_are_inverse_maps (test_qr_decode.TestGfMulTables.test_exp_log_tables_are_inverse_maps) ... ok
+test_full_sweep_matches_peasant_reference (test_qr_decode.TestGfMulTables.test_full_sweep_matches_peasant_reference) ... ok
+test_pad_alternation_address_like (test_qr_decode.TestIsoPadBytePattern.test_pad_alternation_address_like) ... ok
+test_pad_alternation_long_payload (test_qr_decode.TestIsoPadBytePattern.test_pad_alternation_long_payload) ... ok
+test_served_qr_svg_decodes_to_order_address (test_qr_decode.TestServedQrDecodesToAddress.test_served_qr_svg_decodes_to_order_address) ... ok
+test_duplicate_square_rejected (test_qr_decode.TestSvgContract.test_duplicate_square_rejected) ... ok
+test_missing_rect_rejected (test_qr_decode.TestSvgContract.test_missing_rect_rejected) ... ok
+test_no_modules_rejected (test_qr_decode.TestSvgContract.test_no_modules_rejected) ... ok
+test_non_svg_text_rejected (test_qr_decode.TestSvgContract.test_non_svg_text_rejected) ... ok
+test_nonsquare_viewbox_rejected (test_qr_decode.TestSvgContract.test_nonsquare_viewbox_rejected) ... ok
+test_out_of_frame_square_rejected (test_qr_decode.TestSvgContract.test_out_of_frame_square_rejected) ... ok
+test_address_like_round_trip (test_qr_decode.TestSvgRoundTrip.test_address_like_round_trip) ... ok
+test_long_payload_round_trip_crosses_version_7 (test_qr_decode.TestSvgRoundTrip.test_long_payload_round_trip_crosses_version_7) ... ok
+test_numeric_payload_round_trip (test_qr_decode.TestSvgRoundTrip.test_numeric_payload_round_trip) ... ok
+test_single_char_round_trip (test_qr_decode.TestSvgRoundTrip.test_single_char_round_trip) ... ok
+test_unicode_payload_round_trip (test_qr_decode.TestSvgRoundTrip.test_unicode_payload_round_trip) ... ok
+test_all_four_ecc_levels_at_representative_versions (test_qr_decode.TestVersionAndEccSweep.test_all_four_ecc_levels_at_representative_versions) ... ok
+test_alphanumeric_and_byte_segments (test_qr_decode.TestVersionAndEccSweep.test_alphanumeric_and_byte_segments) ... ok
+test_decoder_tables_match_vendored_spec_tables (test_qr_decode.TestVersionAndEccSweep.test_decoder_tables_match_vendored_spec_tables)
+Transcription guard: the decoder's independent copies of the two ... ok
+test_every_version_1_to_40_medium (test_qr_decode.TestVersionAndEccSweep.test_every_version_1_to_40_medium) ... ok
+test_false_on_bind_denied (test_sandbox_gates.TestCanBindSocket.test_false_on_bind_denied)
+Creation succeeds but bind is denied -> False. ... ok
+test_false_on_creation_denied (test_sandbox_gates.TestCanBindSocket.test_false_on_creation_denied)
+Judge-sandbox fingerprint: socket.socket() raises PermissionError ... ok
+test_false_on_generic_oserror (test_sandbox_gates.TestCanBindSocket.test_false_on_generic_oserror) ... ok
+test_gate_reason_strings_present (test_sandbox_gates.TestCanBindSocket.test_gate_reason_strings_present) ... ok
+test_probe_matches_reality (test_sandbox_gates.TestCanBindSocket.test_probe_matches_reality)
+The probe must agree with a direct experiment through the SAME ... ok
+test_auth_failures_on_every_tokened_route (test_smoke.TestHttpSmokeSweep.test_auth_failures_on_every_tokened_route) ... ok
+test_collect_is_public_and_get_order_visible_to_member (test_smoke.TestHttpSmokeSweep.test_collect_is_public_and_get_order_visible_to_member) ... ok
+test_disburse_sent_with_txid (test_smoke.TestHttpSmokeSweep.test_disburse_sent_with_txid) ... ok
+test_export_mip_both_kinds (test_smoke.TestHttpSmokeSweep.test_export_mip_both_kinds) ... ok
+test_index_and_health_open_in_every_mode (test_smoke.TestHttpSmokeSweep.test_index_and_health_open_in_every_mode) ... ok
+test_late_accept_at_locked_quote (test_smoke.TestHttpSmokeSweep.test_late_accept_at_locked_quote) ... ok
+test_late_refund_at_original_locked_amount (test_smoke.TestHttpSmokeSweep.test_late_refund_at_original_locked_amount) ... ok
+test_outbound_payment_hidden_without_token (test_smoke.TestHttpSmokeSweep.test_outbound_payment_hidden_without_token) ... ok
+test_reconcile_binds_lost_broadcast (test_smoke.TestHttpSmokeSweep.test_reconcile_binds_lost_broadcast) ... ok
+test_retry_after_proven_absence (test_smoke.TestHttpSmokeSweep.test_retry_after_proven_absence) ... ok
+test_simulate_refused_with_real_wallet (test_smoke.TestHttpSmokeSweep.test_simulate_refused_with_real_wallet)
+A non-mock chain adapter must never serve the funding endpoint. ... ok
+test_simulate_then_watch_confirms_payment (test_smoke.TestHttpSmokeSweep.test_simulate_then_watch_confirms_payment) ... ok
+test_unknown_routes_and_ids (test_smoke.TestHttpSmokeSweep.test_unknown_routes_and_ids) ... ok
+test_vendor_roundtrip (test_smoke.TestHttpSmokeSweep.test_vendor_roundtrip) ... ok
+
+----------------------------------------------------------------------
+Ran 250 tests in 76.302s
+
+OK
+--- END suite output ---
+SUITE_EXIT=0
+
+$ bash -n deploy/service/install-bridge.sh && bash -n deploy/service/test-install-bridge.sh
+SYNTAX_EXIT=0

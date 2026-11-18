@@ -28,7 +28,10 @@ set -uo pipefail
 # --- identity (never trust $0 after a cd) ------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# --- production constants (overridable ONLY under SANDBOX_ROOT) --------------
+# --- production constants -----------------------------------------------------
+# Serving endpoint is env-config, not code: MAZAPAY_CADDY_DOMAIN /
+# MAZAPAY_HOST_PUB_IP override for a Maza-owned VPS (zero code edits).
+# SANDBOX_ROOT overrides the PATHS below for the hermetic battery.
 OPT_DIR="/opt/mazapay"
 UNIT_DST="/etc/systemd/system/mazapay.service"
 ENV_DST="/etc/mazapay.env"
@@ -41,9 +44,12 @@ LISTEN_HOST="127.0.0.1"
 # *:8443 (wildcard covers loopback; the unit's bind crash-loops Errno 98 and
 # the health probe reads SamiPanel's 404). Found live 2026-11-15.
 LISTEN_PORT="18500"
-CADDY_DOMAIN="mazapay.sami-ahmed.net"
+# Transferability (Sami directive 2026-11-18): the serving endpoint is config,
+# not a code constant — a Maza-owned VPS deploy overrides these two env vars
+# and ships zero code edits. Defaults keep samihost reruns byte-identical.
+CADDY_DOMAIN="${MAZAPAY_CADDY_DOMAIN:-mazapay.sami-ahmed.net}"
 LOG_DIR="/var/log/caddy"   # sandbox: overridden below; path derived after the SANDBOX block
-HOST_PUB_IP="194.163.161.162"   # samihost public v4 — the DNS gate's expected A record
+HOST_PUB_IP="${MAZAPAY_HOST_PUB_IP:-194.163.161.162}"   # DNS gate's expected A record (override for another VPS)
 LEGACY_PORT="18443"
 # caddy-guard state files (Samihost reconciler): SamiPanel's Caddyfile generator
 # rewrites the WHOLE file on panel events and the guard restores ONLY blocks
@@ -68,7 +74,9 @@ if [ -n "${SANDBOX_ROOT:-}" ]; then
     LOCK_DIR="${SANDBOX_ROOT}/lock"
     PROC_DIR="${SANDBOX_PROC_DIR:?SANDBOX_PROC_DIR required}"
     LEGACY_PORT="${SANDBOX_LEGACY_PORT:-18999}"
-    CADDY_DOMAIN="${SANDBOX_CADDY_DOMAIN:-sandbox.mazapay.invalid}"
+    # Production env override wins over the sandbox default: S15 proves the
+    # Maza-owned VPS path (MAZAPAY_CADDY_DOMAIN) flows through a SANDBOX run.
+    CADDY_DOMAIN="${MAZAPAY_CADDY_DOMAIN:-${SANDBOX_CADDY_DOMAIN:-sandbox.mazapay.invalid}}"
     RUN_USER="${SANDBOX_RUN_USER:-mazapay-sbx}"
     TREE_SRC="${SANDBOX_TREE_SRC:?SANDBOX_TREE_SRC required}"
     UNIT_SRC="${SANDBOX_UNIT_SRC:?SANDBOX_UNIT_SRC required}"
@@ -95,6 +103,9 @@ LOCK_FILE="${LOCK_DIR}/mazapay-install.lock"
 
 # --- state flags -------------------------------------------------------------
 MUTATED=0        # armed before the first live mutation
+ENV_CHANGED=0    # env.next installed into ENV_DST (rollback must restore/remove)
+GUARD_CHANGED=0  # guard state files written (rollback must restore/remove)
+USER_CREATED=0   # this run created the system user (rollback removes it)
 CADDY_CHANGED=0
 UNIT_CHANGED=0
 SYMLINK_CHANGED=0
@@ -119,7 +130,7 @@ on_exit() {
     fi
     if [ "$MUTATED" -eq 0 ]; then
         rm -rf "$SCRATCH"
-        log "aborted before any mutation — nothing to roll back"
+        log "aborted pre-arm — live system state unchanged (any staged artifacts were discarded)"
         exit "$rc"
     fi
     # NOTE: scratch survives until rollback finishes — it carries the
@@ -203,6 +214,69 @@ rollback() {
         log "ROLLBACK: legacy :${LEGACY_PORT} instance stays retired (superseded by unit)"
     fi
 
+    # 6. Secrets env: undo the env install (restore pre-install bytes, or
+    #    remove the fresh-install file). Fail-closed: if the pre-install copy
+    #    is somehow missing we do NOT delete the live env — we report it.
+    if [ "$ENV_CHANGED" -eq 1 ]; then
+        if [ "$PRE_ENV" -eq 1 ]; then
+            if [ -f "${SCRATCH}/env.before" ]; then
+                if cp "${SCRATCH}/env.before" "$ENV_DST" && chmod 0600 "$ENV_DST"; then
+                    log "ROLLBACK: env restored from pre-install copy"
+                else
+                    warn "ROLLBACK: env restore failed"
+                    ok=0
+                fi
+            else
+                warn "ROLLBACK: no pre-install env copy found — live env NOT touched"
+                ok=0
+            fi
+        else
+            if rm -f "$ENV_DST"; then
+                log "ROLLBACK: fresh install, env removed"
+            else
+                warn "ROLLBACK: env remove failed"
+                ok=0
+            fi
+        fi
+    fi
+
+    # 7. Caddy-guard state files: restore pre-registration bytes (or remove
+    #    files this run created on a host that had none).
+    if [ "$GUARD_CHANGED" -eq 1 ]; then
+        for gf in "$GUARD_PREGUARD" "$GUARD_BLOCKS"; do
+            [ -n "$gf" ] || continue
+            gb="${SCRATCH}/guard.before.$(basename "$gf")"
+            if [ -e "${gb}.absent" ]; then
+                if rm -f "$gf"; then
+                    log "ROLLBACK: guard state removed (absent before run): $gf"
+                else
+                    warn "ROLLBACK: guard file remove failed: $gf"
+                    ok=0
+                fi
+            elif [ -e "$gb" ]; then
+                if cp "$gb" "$gf"; then
+                    log "ROLLBACK: guard state restored: $gf"
+                else
+                    warn "ROLLBACK: guard restore failed: $gf"
+                    ok=0
+                fi
+            else
+                warn "ROLLBACK: no pre-registration copy for guard file: $gf (left as-is)"
+                ok=0
+            fi
+        done
+    fi
+
+    # 8. System user: removed ONLY when this run created it; failure is
+    #    recorded, never fatal (a leftover nologin system user is inert).
+    if [ "$USER_CREATED" -eq 1 ]; then
+        if userdel "$RUN_USER" 2>/dev/null; then
+            log "ROLLBACK: system user removed (created by this run): $RUN_USER"
+        else
+            warn "ROLLBACK: userdel $RUN_USER failed (left in place)"
+        fi
+    fi
+
     if [ "$ok" -eq 1 ]; then
         log "ROLLBACK-DONE"
         exit 1
@@ -219,7 +293,7 @@ need_bin() {
     done
 }
 need_bin python3 sha256sum install cp mv ln rm ss dig caddy systemctl getent date mktemp curl seq tr \
-    find xargs grep sort diff awk sed cut wc useradd kill mkdir
+    find xargs grep sort diff awk sed cut wc useradd userdel kill mkdir
 
 [ "$(id -u)" -eq 0 ] || fail 3 "must run as root"
 
@@ -348,16 +422,20 @@ if [ "$PRE_ENV" -eq 1 ]; then
 else
     ENV_SHA_BEFORE=""
 fi
-log "assembling env file (secrets stay in-process)"
-python3 - "$RPC_CONF" "$ENV_DST" "$LISTEN_HOST" "$LISTEN_PORT" \
+log "assembling env file (secrets stay in-process; written to scratch first)"
+# TRANSACTIONAL: the candidate env is built at ${SCRATCH}/env.next and the
+# live ENV_DST is only overwritten AFTER the preservation check passes, with
+# MUTATED armed BEFORE that write — so every abort path leaves ENV_DST either
+# untouched (pre-arm) or rolled back to ${SCRATCH}/env.before (post-arm).
+python3 - "$RPC_CONF" "$ENV_DST" "${SCRATCH}/env.next" "$LISTEN_HOST" "$LISTEN_PORT" \
     >"${SCRATCH}/env-meta.log" <<'PY'
 import hashlib, os, secrets, sys
 
-conf_path, env_path, host, port = sys.argv[1:5]
+conf_path, live_path, next_path, host, port = sys.argv[1:6]
 
 existing = {}
-if os.path.exists(env_path):
-    for line in open(env_path):
+if os.path.exists(live_path):
+    for line in open(live_path):
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, v = line.split("=", 1)
@@ -386,12 +464,11 @@ body = (
     f"MAZAPAY_MAZAD_RPC_USER={rpc['rpcuser']}\n"
     f"MAZAPAY_MAZAD_RPC_PASSWORD={rpc['rpcpassword']}\n"
 )
-fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+sha = hashlib.sha256(body.encode()).hexdigest()
+fd = os.open(next_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
 os.write(fd, body.encode())
 os.close(fd)
-os.chmod(env_path, 0o600)
-
-sha = hashlib.sha256(open(env_path, "rb").read()).hexdigest()
+os.chmod(next_path, 0o600)
 print(f"env_present_before={bool(existing)}")
 print(f"token_generated={'no' if existing.get('MAZAPAY_API_TOKEN') else 'yes'}")
 print(f"token_len={len(token)}")
@@ -406,15 +483,16 @@ if [ $rc -ne 0 ]; then
     fail 3 "env assembly failed (rc=$rc) — no secrets were printed"
 fi
 if [ "$PRE_ENV" -eq 1 ]; then
-    # Preservation invariant: every secret ALREADY in the env file must
-    # survive verbatim (values compared in-process, never printed). A file
-    # that lacked operational fields legitimately gains them — that is a
-    # refresh, not a violation.
+    # Preservation invariant (checked against the CANDIDATE env.next — the
+    # live ENV_DST has not been touched yet): every secret ALREADY in the env
+    # file must survive verbatim (values compared in-process, never printed).
+    # A file that lacked operational fields legitimately gains them — that is
+    # a refresh, not a violation.
     env_ok=1
     while IFS= read -r key; do
         val="$(grep -E "^${key}=" "${SCRATCH}/env.before" | head -1 | cut -d= -f2-)"
         [ -n "$val" ] || continue
-        grep -qF -- "${key}=${val}" "$ENV_DST" || env_ok=0
+        grep -qF -- "${key}=${val}" "${SCRATCH}/env.next" || env_ok=0
     done <<'KEYS'
 MAZAPAY_API_TOKEN
 MAZAPAY_MAZAD_RPC_PASSWORD
@@ -423,6 +501,13 @@ KEYS
         rm -rf "${REL_DIR:?}"
         fail 3 "existing env secrets were not preserved — aborting, no secrets printed"
     fi
+fi
+# First live mutation of ENV_DST: arm rollback BEFORE the write, then install
+# the validated candidate (install, not cp: explicit mode, replace semantics).
+ENV_CHANGED=1
+MUTATED=1
+install -m 0600 "${SCRATCH}/env.next" "$ENV_DST" || fail 2 "env install failed"
+if [ "$PRE_ENV" -eq 1 ]; then
     ENV_SHA_AFTER="$(sha256sum "$ENV_DST" | awk '{print $1}')"
     if [ "$ENV_SHA_BEFORE" = "$ENV_SHA_AFTER" ]; then
         log "env rerun: PRESERVED byte-identical (sha ${ENV_SHA_AFTER:0:12}…)"
@@ -470,21 +555,23 @@ MUTATED=1   # idempotent re-arm (already armed if legacy was killed)
 if [ "$USER_EXISTS" -eq 0 ]; then
     useradd --system --home-dir /nonexistent --shell /usr/sbin/nologin "$RUN_USER" \
         || fail 2 "useradd $RUN_USER failed"   # post-mutation: rollback path
+    USER_CREATED=1
     log "system user created: $RUN_USER"
 fi
 
-# unit
+# unit (arm rollback BEFORE the destination write: a partially-written unit
+# must restore — or be removed on fresh install — same contract as the env)
 if [ "$PRE_UNIT" -eq 1 ]; then
     cp "$UNIT_DST" "${UNIT_DST}.pre-mazapay" || fail 2 "unit backup failed"
 fi
-install -m 0644 "$UNIT_SRC" "$UNIT_DST" || fail 2 "unit install failed"
 UNIT_CHANGED=1
+install -m 0644 "$UNIT_SRC" "$UNIT_DST" || fail 2 "unit install failed"
 systemctl daemon-reload >/dev/null 2>&1 || fail 2 "daemon-reload failed"
 
-# release symlink
-ln -sfn "$REL_DIR" "${OPT_DIR}/current" || fail 2 "symlink swap failed"
-SYMLINK_CHANGED=1
+# release symlink (same arm-before-write contract; prior pointer journaled first)
 [ -n "$PRE_CURRENT" ] && printf '%s' "$PRE_CURRENT" >"${SCRATCH}/prev_release"
+SYMLINK_CHANGED=1
+ln -sfn "$REL_DIR" "${OPT_DIR}/current" || fail 2 "symlink swap failed"
 log "current -> $REL_DIR"
 
 # caddy managed block
@@ -500,6 +587,17 @@ register_guard_block() {
         log "caddy-guard not present on this host — skipping block registration"
         return 0
     fi
+    # Journal + arm BEFORE any guard-state write: a crash between the two
+    # file writes must restore both (or remove files this run created).
+    for gf in "$GUARD_PREGUARD" "$GUARD_BLOCKS"; do
+        [ -n "$gf" ] || continue
+        if [ -e "$gf" ]; then
+            cp "$gf" "${SCRATCH}/guard.before.$(basename "$gf")" || fail 2 "guard backup failed: $gf"
+        else
+            : > "${SCRATCH}/guard.before.$(basename "$gf").absent"
+        fi
+    done
+    GUARD_CHANGED=1
     python3 - "$GUARD_PREGUARD" "$GUARD_BLOCKS" "$CADDY_DOMAIN" "${LISTEN_HOST}:${LISTEN_PORT}" "$LOG_PATH" <<'PYGUARD' || fail 2 "caddy-guard registration failed — a panel Caddyfile regen would drop the vhost (guard copies kept; rerun the installer after fixing)"
 import os, sys
 preguard, merged, label, upstream, logpath = sys.argv[1:6]
@@ -631,8 +729,9 @@ if ! caddy validate --adapter caddyfile --config "$CANDIDATE" >/dev/null 2>&1; t
 fi
 register_guard_block
 cp "$CADDYFILE" "${CADDYFILE}${CADDY_BACKUP_SUFFIX}" || fail 2 "caddy backup failed"
-cp "$CANDIDATE" "$CADDYFILE" || fail 2 "caddy install failed"
+# Arm rollback BEFORE the destination write (partial-write contract).
 CADDY_CHANGED=1
+cp "$CANDIDATE" "$CADDYFILE" || fail 2 "caddy install failed"
 if ! caddy reload --config "$CADDYFILE" >/dev/null 2>&1; then
     fail 2 "caddy reload failed — rolling back to previous Caddyfile"
 fi

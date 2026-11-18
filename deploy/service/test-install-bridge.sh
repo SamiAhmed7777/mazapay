@@ -114,6 +114,11 @@ echo "useradd $*" >> "$SANDBOX_ROOT/logs/useradd.log"
 : > "$SANDBOX_ROOT/user_added"
 exit 0
 EOF
+    cat > "$sbx/shims/userdel" <<'EOF'
+#!/bin/sh
+echo "userdel $*" >> "$SANDBOX_ROOT/logs/userdel.log"
+exit 0
+EOF
     cat > "$sbx/shims/ss" <<'EOF'
 #!/bin/sh
 [ "${SS_HOLD_LISTEN:-0}" = "1" ] && echo 'LISTEN 0 5 127.0.0.1:18500 0.0.0.0:*'
@@ -181,6 +186,47 @@ for d in NoNewPrivileges=true ProtectSystem=strict PrivateTmp=true ProtectHome=t
     ck "repo unit hardening: $d" grep -qF -- "$d" "$REAL_UNIT"
 done
 
+# Transferability defaults (Sami directive 2026-11-18): endpoint constants are
+# env-overridable; the DEFAULTS must stay pinned so samihost reruns stay
+# byte-identical until the Maza-owned hosting cutover.
+ck "installer CADDY_DOMAIN default pinned (byte-identical rerun)" \
+    grep -qF -- '${MAZAPAY_CADDY_DOMAIN:-mazapay.sami-ahmed.net}' "$INSTALLER"
+ck "installer HOST_PUB_IP default pinned" \
+    grep -qF -- '${MAZAPAY_HOST_PUB_IP:-194.163.161.162}' "$INSTALLER"
+
+# Portability release gate (Sami directive 2026-11-18): the WHOLE repo surface
+# must carry no personal endpoints, with explicit reviewed exemptions:
+#  - deploy/service/install-bridge.sh: the two env-overridable DEFAULT endpoint
+#    values, pinned by the S0 checks above (the one sanctioned production
+#    holder);
+#  - deploy/service/test-install-bridge.sh: this harness itself — it must quote
+#    the literal defaults to PIN them (S0) and to assert their absence from
+#    rendered outputs (S15) and to plant them in fixtures (S16). Build-time
+#    tooling, never a serving path; splitting the literals to dodge this scan
+#    would be obfuscation, not portability;
+#  - deploy/node/BRIEF.md + deploy/node/ev-*.txt: the sanitized node-install
+#    evidence trail of record (historical install record, not shipped code).
+# rc discipline: 0 = clean, 1 = violation found, 2 = operational error
+# (missing/unreadable root) — an operational error FAILS the gate, it is never
+# a silent pass.
+portable_gate() { # $1 = repo root to scan
+    local root="$1"
+    local pat='sami-ahmed\.net|sami-host\.me|194\.163\.161\.162|mazatest|100\.[0-9]+\.[0-9]+\.[0-9]+'
+    local rc=0 hits
+    hits="$(grep -rIlE "$pat" "$root" \
+                --exclude-dir=.git --exclude-dir=__pycache__ \
+                --exclude='*.sqlite3' --exclude='*.pyc' 2>/dev/null)" || rc=$?
+    [ "$rc" -le 1 ] || return 2
+    hits="$(printf '%s\n' "$hits" \
+        | grep -vE '/deploy/service/(install-bridge|test-install-bridge)\.sh$' \
+        | grep -vE '/deploy/node/(BRIEF\.md|ev-[^/]*\.txt)$')"
+    [ -z "$hits" ]
+}
+ck "repo surface free of personal endpoints (portability release gate, full-tree)" \
+    portable_gate "$HERE/../.."
+ck "node evidence trail carries no live rpcpassword (48-hex literal)" \
+    bash -c '! grep -rIlE "^rpcpassword=[0-9a-f]{48}$" "$HERE/../node" 2>/dev/null'
+
 echo "== S1: fresh install, happy path"
 sbx="$(new_sbx s1)"
 rc="$(run_install "$sbx")"
@@ -243,6 +289,9 @@ ck "env preserved (oldtoken still there)" file_has "$sbx/etc/mazapay.env" "MAZAP
 ck "caddy restored without block" not_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge"
 ck "rollback marker printed" file_has "$sbx/logs/run.log" "ROLLBACK-DONE"
 ck "rollback restarted service" grep -q "systemctl restart mazapay.service" "$sbx/logs/systemctl.log"
+ck "guard pre-guard restored (empty again)" [ ! -s "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" ]
+ck "guard merged restored (no registered block left)" not_has "$sbx/var/lib/caddy-guard/protected-blocks.txt" "sandbox.mazapay.invalid"
+ck "guard restore logged" file_has "$sbx/logs/run.log" "guard state restored"
 leak_check "$sbx"
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
@@ -355,6 +404,40 @@ ck "existing env untouched" file_has "$sbx/etc/mazapay.env" "MAZAPAY_API_TOKEN=k
 ck "no releases staged" [ -z "$(ls -A "$sbx/opt/releases" 2>/dev/null)" ]
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
 
+echo "== S10b: ROTATED rpc password + existing env -> preservation abort, env byte-identical (candidate checked, live file never mutated)"
+sbx="$(new_sbx s10b)"
+{
+    printf 'MAZAPAY_API_TOKEN=sbxtoken-keepme\n'
+    printf 'MAZAPAY_MAZAD_RPC_PASSWORD=%s\n' "$RPC_SECRET"
+} > "$sbx/etc/mazapay.env"
+sha0="$(sha256sum "$sbx/etc/mazapay.env" | awk '{print $1}')"
+printf 'server=1\nrpcbind=127.0.0.1\nrpcport=12832\nrpcuser=sbxuser\nrpcpassword=ROTATED-NEWSECRET\n' > "$sbx/rpc.conf"
+rc="$(run_install "$sbx")"
+ck "exit code is 3" rc_is "$rc" 3
+ck "existing env byte-identical (never mutated)" [ "$(sha256sum "$sbx/etc/mazapay.env" | awk '{print $1}')" = "$sha0" ]
+ck "rotated password did NOT land in live env" not_has "$sbx/etc/mazapay.env" "ROTATED-NEWSECRET"
+ck "old RPC password still in env" file_has "$sbx/etc/mazapay.env" "MAZAPAY_MAZAD_RPC_PASSWORD=$RPC_SECRET"
+ck "preservation abort message logged" file_has "$sbx/logs/run.log" "existing env secrets were not preserved"
+ck "aborted pre-arm (live system state unchanged)" file_has "$sbx/logs/run.log" "aborted pre-arm — live system state unchanged"
+ck "no releases staged" [ -z "$(ls -A "$sbx/opt/releases" 2>/dev/null)" ]
+ck "no unit written" [ ! -e "$sbx/etc/systemd/system/mazapay.service" ]
+ck "no caddy block" not_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S10c: FRESH install + post-env failure -> rollback REMOVES the fresh env (no orphan secrets file)"
+sbx="$(new_sbx s10c)"
+rc="$(run_install "$sbx" CURL_STATUS=503)"
+ck "rollback exit code is 1" rc_is "$rc" 1
+ck "fresh env removed by rollback" [ ! -e "$sbx/etc/mazapay.env" ]
+ck "rollback marker printed" file_has "$sbx/logs/run.log" "ROLLBACK-DONE"
+ck "env removed line logged" file_has "$sbx/logs/run.log" "fresh install, env removed"
+ck "unit removed" [ ! -e "$sbx/etc/systemd/system/mazapay.service" ]
+ck "no caddy block" not_has "$sbx/etc/caddy/Caddyfile" "BEGIN mazapay-bridge"
+ck "guard files restored" file_has "$sbx/logs/run.log" "guard state restored"
+ck "created system user removed on rollback" file_has "$sbx/logs/userdel.log" "userdel mazapay-sbx"
+leak_check "$sbx"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
 echo "== S11: caddy-guard registration — block lands in BOTH state files, rerun idempotent"
 sbx="$(new_sbx s11)"
 rc="$(run_install "$sbx")"
@@ -453,6 +536,35 @@ ck "original non-mazapay site kept" file_has "$sbx/etc/caddy/Caddyfile" "sbxsite
 ck "no decoy port survives" not_has "$sbx/etc/caddy/Caddyfile" "reverse_proxy 127.0.0.1:18999"
 leak_check "$sbx"
 [ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S15: portability override — endpoint/domain flow from env (Maza-owned VPS path)"
+sbx="$(new_sbx s15)"
+rc="$(run_install "$sbx" "MAZAPAY_CADDY_DOMAIN=shop.maza.example" "MAZAPAY_HOST_PUB_IP=203.0.113.7")"
+ck "exit 0 (override deploy ships zero code edits)" rc_is "$rc" 0
+ck "caddy block uses the overridden domain" file_has "$sbx/etc/caddy/Caddyfile" "shop.maza.example {"
+ck "no personal endpoint in the rendered Caddyfile" not_has "$sbx/etc/caddy/Caddyfile" "sami-ahmed.net"
+ck "access log named from the overridden domain" [ -f "$sbx/var/log/caddy/shop.maza.example.access.log" ]
+ck "guard registration carries the overridden domain" file_has "$sbx/var/lib/caddy-guard/protected-blocks.txt.pre-guard" "shop.maza.example"
+ck "DEPLOYED line carries the override" file_has "$sbx/logs/run.log" "DEPLOYED: shop.maza.example -> 127.0.0.1:18500"
+leak_check "$sbx"
+[ "${KEEP_SBX:-0}" = "1" ] || rm -rf "$sbx"
+
+echo "== S16: portability gate is live — planted violation caught, errors fail"
+groot="$(mktemp -d /tmp/mzp-gate.XXXXXXXX)"
+mkdir -p "$groot/mazapay/templates" "$groot/deploy/service" "$groot/deploy/node" "$groot/docs"
+printf 'ok\n' > "$groot/mazapay/api.py"
+printf 'ok\n' > "$groot/docs/user-guide.md"
+printf 'MAZAPAY_CADDY_DOMAIN="${MAZAPAY_CADDY_DOMAIN:-mazapay.sami-ahmed.net}"\n' > "$groot/deploy/service/install-bridge.sh"
+printf 'samihost install record\n' > "$groot/deploy/node/BRIEF.md"
+printf 'x\n' > "$groot/deploy/node/ev-service-run.txt"
+portable_gate "$groot"; gclean=$?
+ck "gate passes a clean tree (only sanctioned holders present)" [ "$gclean" -eq 0 ]
+printf 'endpoint sami-ahmed.net baked into a shipped page\n' > "$groot/mazapay/templates/checkout.html"
+portable_gate "$groot"; gbad=$?
+ck "gate FAILS on a planted violation outside the exemptions" [ "$gbad" -eq 1 ]
+portable_gate "$groot/no-such-dir"; gerr=$?
+ck "gate FAILS (rc 2) on an unreadable root — no silent pass" [ "$gerr" -eq 2 ]
+rm -rf "$groot"
 
 echo
 echo "assertions: $PASS passed, $FAIL failed"
