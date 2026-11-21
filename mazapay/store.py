@@ -19,7 +19,7 @@ import json
 import sqlite3
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from . import config
 
@@ -60,6 +60,16 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_nonce
     ON orders(nonce) WHERE nonce IS NOT NULL;
+CREATE TABLE IF NOT EXISTS links (
+    id TEXT PRIMARY KEY,             -- unguessable: secrets.token_urlsafe(16)
+    usd_amount TEXT NOT NULL,        -- Decimal as string (never float)
+    memo TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,            -- active | paid | deactivated | expired
+    order_id TEXT,                   -- first order created through the link
+    created_at TEXT NOT NULL,        -- UTC ISO
+    expires_at TEXT NOT NULL,        -- created_at + MAZAPAY_LINK_TTL_DAYS
+    idempotency_key TEXT UNIQUE      -- optional merchant-supplied key
+);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts REAL NOT NULL,
@@ -573,3 +583,105 @@ def finalize_export(export_id: str) -> int:
                 conn, "order", "*", "exported_to_mip", {"export_id": export_id, "count": n}
             )
     return n
+
+
+# --- payment links -------------------------------------------------------------
+# A link is a front door to the existing order machinery: it stores a USD
+# amount + memo, and a buyer checkout creates a REAL order via the existing
+# create_order path. Timestamps are UTC ISO strings (same-format ISO sorts
+# lexicographically, so expiry comparisons are plain string comparisons).
+
+
+_LINK_COLUMNS = {
+    # Whitelist for dynamically built UPDATE column lists, same rule as
+    # _ORDER_COLUMNS: values are bound, keys are interpolated.
+    "usd_amount", "memo", "status", "order_id", "expires_at", "idempotency_key",
+}
+
+
+def insert_link(link: Dict[str, Any]) -> None:
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO links (id, usd_amount, memo, status, order_id,"
+            " created_at, expires_at, idempotency_key) VALUES (?,?,?,?,?,?,?,?)",
+            (
+                link["id"],
+                link["usd_amount"],
+                link["memo"],
+                link["status"],
+                link.get("order_id"),
+                link["created_at"],
+                link["expires_at"],
+                link.get("idempotency_key"),
+            ),
+        )
+        append_audit(
+            conn,
+            "link",
+            link["id"],
+            "created",
+            {"usd_amount": link["usd_amount"], "memo": link["memo"]},
+        )
+
+
+def get_link(link_id: str) -> Optional[Dict[str, Any]]:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM links WHERE id=?", (link_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_link_by_idempotency_key(key: str) -> Optional[Dict[str, Any]]:
+    with db() as conn:
+        row = conn.execute("SELECT * FROM links WHERE idempotency_key=?", (key,)).fetchone()
+    return dict(row) if row else None
+
+
+def list_links() -> List[Dict[str, Any]]:
+    with db() as conn:
+        rows = conn.execute("SELECT * FROM links ORDER BY created_at DESC").fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_link(link_id: str, fields: Dict[str, Any], event: str) -> None:
+    if not fields:
+        return
+    unknown = [k for k in fields if k not in _LINK_COLUMNS]
+    if unknown:
+        raise ValueError(f"unknown link columns: {unknown}")
+    cols = ", ".join(f"{k}=?" for k in fields)
+    with db() as conn:
+        conn.execute(
+            f"UPDATE links SET {cols} WHERE id=?", (*fields.values(), link_id)
+        )
+        append_audit(conn, "link", link_id, event, fields)
+
+
+def set_link_order(link_id: str, order_id: str) -> bool:
+    """Bind the FIRST checkout's order to the link (compare-and-set on
+    order_id IS NULL): repeated checkouts never clobber the binding."""
+    with db() as conn:
+        cur = conn.execute(
+            "UPDATE links SET order_id=? WHERE id=? AND order_id IS NULL",
+            (order_id, link_id),
+        )
+        won = cur.rowcount == 1
+        if won:
+            append_audit(conn, "link", link_id, "order_attached", {"order_id": order_id})
+    return won
+
+
+def flip_link_status(
+    link_id: str, from_statuses: Tuple[str, ...], to_status: str, event: str = "transition"
+) -> bool:
+    """Atomic compare-and-set on link status (same guard as store.transition):
+    only one caller wins a race; losers see rowcount 0 and get False."""
+    placeholders = ", ".join("?" for _ in from_statuses)
+    with db() as conn:
+        cur = conn.execute(
+            f"UPDATE links SET status=? WHERE id=? AND status IN ({placeholders})",
+            (to_status, link_id, *from_statuses),
+        )
+        won = cur.rowcount == 1
+        if won:
+            append_audit(conn, "link", link_id, event, {"to": to_status})
+    return won

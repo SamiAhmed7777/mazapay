@@ -47,6 +47,13 @@ Endpoints:
   GET  /admin                         — orders dashboard (HTML page for
       operators, JSON via ?format=json): status counts + newest-first order
       list, filterable by ?kind=in|out and ?status=, bounded by ?limit=
+  POST /links                         — {usd_amount, memo?, idempotency_key?}
+      create a merchant-shareable payment link
+  GET  /links                         — your payment links, newest first
+  POST /links/{id}/deactivate         — retire a payment link
+  GET  /pay/{link_id}                 — public payment-link page (no auth)
+  POST /pay/{link_id}/checkout        — buyer checkout: creates a real order
+      through the existing create_order path (no auth, intake caps apply)
 """
 import base64
 import hmac
@@ -64,7 +71,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from . import config, mip_export, pricing, qr, store, watcher
+from . import config, mip_export, paylinks, pricing, qr, store, watcher
 from .mazad import ChainError, get_chain, is_mock
 
 _TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "checkout.html")
@@ -559,6 +566,11 @@ _ROUTES = [
     ("POST", re.compile(r"^/watch$"), "watch_post", True),
     ("GET", re.compile(r"^/export/mip$"), "export_get", True),
     ("GET", re.compile(r"^/admin$"), "admin_get", True),
+    ("POST", re.compile(r"^/links$"), "links_post", True),
+    ("GET", re.compile(r"^/links$"), "links_get", True),
+    ("POST", re.compile(r"^/links/([\w-]+)/deactivate$"), "link_deactivate", True),
+    ("GET", re.compile(r"^/pay/([\w-]+)$"), "pay_get", False),
+    ("POST", re.compile(r"^/pay/([\w-]+)/checkout$"), "pay_checkout", False),
 ]
 
 
@@ -1217,6 +1229,104 @@ class Handler(BaseHTTPRequestHandler):
         self._security_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    # -- payment links ------------------------------------------------------------
+    # Thin handlers over mazapay.paylinks: validation reuses _usd_amount /
+    # _str_field, auth is the routes table's existing check, and the buyer
+    # checkout funnels into the SAME create_order path as POST /orders.
+
+    def _pay_url(self, link_id: str) -> str:
+        """Absolute pay URL when the Host header is present (X-Forwarded-Proto
+        aware for the loopbound-behind-proxy deploy); relative otherwise."""
+        host = self.headers.get("Host", "")
+        if not host:
+            return f"/pay/{link_id}"
+        proto = self.headers.get("X-Forwarded-Proto", "http")
+        return f"{proto}://{host}/pay/{link_id}"
+
+    def _links_post(self) -> None:
+        body = self._body()
+        usd_raw = body.get("usd_amount")
+        if not isinstance(usd_raw, str):
+            # Money integrity: the amount arrives as a decimal STRING (the
+            # store's money convention) — a JSON number would already be a
+            # float on this side of the wire.
+            raise ApiError(400, "usd_amount must be a decimal string")
+        usd = _usd_amount(usd_raw)
+        if usd > config.MAX_ORDER_USD:
+            raise ApiError(
+                400,
+                f"usd_amount exceeds the per-order maximum of {config.MAX_ORDER_USD:g} USD",
+            )
+        if usd != usd.quantize(Decimal("0.01")):
+            raise ApiError(400, "usd_amount must have at most two decimal places")
+        memo = _str_field(body.get("memo", ""), "memo")
+        if len(memo) > paylinks.MAX_MEMO_CHARS:
+            raise ApiError(
+                400, f"memo must be at most {paylinks.MAX_MEMO_CHARS} characters"
+            )
+        idem = _str_field(body.get("idempotency_key", ""), "idempotency_key") or None
+        link, created = paylinks.create_link(usd, memo, idem)
+        # Same idempotency_key returns the same link with 200, not 201.
+        self._json(
+            201 if created else 200,
+            paylinks.link_public(link, self._pay_url(link["id"])),
+        )
+
+    def _links_get(self) -> None:
+        links = paylinks.list_links()
+        self._json(
+            200,
+            {"links": [paylinks.link_public(l, self._pay_url(l["id"])) for l in links]},
+        )
+
+    def _link_deactivate(self, link_id: str) -> None:
+        link = paylinks.get_link(link_id)
+        if link is None:
+            raise ApiError(404, "payment link not found")
+        if link["status"] == "deactivated":
+            self._json(200, {"status": "deactivated"})  # idempotent
+            return
+        if not store.flip_link_status(
+            link_id, ("active", "expired"), "deactivated", event="link_deactivated"
+        ):
+            raise ApiError(409, f"payment link is '{link['status']}'; cannot deactivate")
+        self._json(200, {"status": "deactivated"})
+
+    def _pay_get(self, link_id: str) -> None:
+        link = paylinks.get_link(link_id)
+        if link is None:
+            # Unknown ids are a JSON 404 — never an HTML leak.
+            raise ApiError(404, "payment link not found")
+        body = paylinks.pay_page_html(link).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        # The page carries link state: a shared browser must never cache it.
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self._security_headers()  # same set as the checkout page
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _pay_checkout(self, link_id: str) -> None:
+        # Body accepted for POST-/orders shape compatibility; the order
+        # ALWAYS carries the link's own amount/memo (server-side), so the
+        # buyer cannot rewrite the amount.
+        self._body()
+        link = paylinks.get_link(link_id)
+        if link is None:
+            raise ApiError(404, "payment link not found")
+        if link["status"] != "active":
+            raise ApiError(
+                409, f"this payment link is {link['status']}; new orders are not accepted"
+            )
+        client_ip = self._client_ip()
+        _check_intake_caps(client_ip)
+        order = create_order(
+            link["usd_amount"], paylinks.order_ref(link), client_ip=client_ip
+        )
+        paylinks.attach_order(link["id"], order["id"])
+        self._json(201, order)
 
 
 class Server(ThreadingHTTPServer):

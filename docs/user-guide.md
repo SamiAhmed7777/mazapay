@@ -331,6 +331,76 @@ only over the bridge's HTTPS address or on the machine it runs on.
 
 ---
 
+## Payment links
+
+A **payment link** is a shareable URL for a fixed USD amount. Create
+it once, send it to the person who owes you (text, email, invoice
+PDF — anything that carries a link), and they get the same checkout
+flow as the checkout page — pre-filled, with nothing to type.
+
+Create a link (requires the API token):
+
+```
+curl -X POST -H "Authorization: Bearer ***" \
+     -d '{"usd_amount": "25.00", "memo": "Club dues, fall term"}' \
+     localhost:8443/links
+```
+
+```json
+{
+  "link_id": "…",
+  "pay_url": "http://localhost:8443/pay/…",
+  "usd_amount": "25.00",
+  "memo": "Club dues, fall term",
+  "status": "active",
+  "expires_at": "2026-12-20T…"
+}
+```
+
+Send the `pay_url`. Anyone who opens it sees the amount and your
+memo, clicks **Pay**, and gets the usual quote → address/QR → receipt
+flow; the watcher credits it exactly like any other payment, and the
+receipt shows up in the MIP export with the memo as its reference
+(memos that aren't safe reference text are recorded under a neutral
+`paylink` tag instead). The public page shows only the link itself —
+no merchant details, no tokens, no dashboard data.
+
+Rules worth knowing:
+
+- **Amounts are exact.** `usd_amount` is a decimal string with at
+  most two places (`"25.00"`, not `25`); NaN, negatives, zero and
+  sub-cent amounts are refused. The buyer cannot change the amount —
+  the order always carries the link's own amount and memo.
+- **Memos are optional**, stored verbatim up to **200 characters**
+  (longer memos are refused, not truncated), and always rendered
+  escaped on the page.
+- **A link lives 30 days** by default (`MAZAPAY_LINK_TTL_DAYS` sets
+  it). An expired or deactivated link shows "no longer available" and
+  refuses new orders.
+- **A link pays once, first-come-first-served.** The first checkout
+  binds an order to the link; when that order settles, the link flips
+  to **paid** and the page shows an "already paid" banner.
+- **Idempotency:** send an `idempotency_key` when creating links —
+  retrying the same key returns the same link instead of making a
+  duplicate.
+- **Resend the same link freely:** re-opening a paid or expired link
+  never creates or changes an order.
+
+Managing links (all require the token):
+
+```
+curl -H "Authorization: Bearer ***" localhost:8443/links          # newest first, with status + order id
+curl -X POST -H "Authorization: Bearer ***" \
+     localhost:8443/links/<link_id>/deactivate                    # retire a link
+```
+
+A paid link cannot be deactivated (its receipt history stays
+truthful), and the public checkout on a link counts against the same
+open-order limits as the checkout page, so a leaked link can't be
+used to flood the bridge.
+
+---
+
 ## Troubleshooting
 
 ### "The explorer shows my payment, but the order still says awaiting"
