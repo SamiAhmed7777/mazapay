@@ -45,6 +45,14 @@ Environment=MAZAPAY_TR_DB=/var/lib/mazapay/mazapay.sqlite3
 # shared file — the treasury would report "sent" while the bridge never saw it.
 Environment=MAZAPAY_DB=/var/lib/mazapay/mazapay.sqlite3
 Environment=MAZAPAY_TR_COOKIE_SECURE=1
+# Sign-in mail (optional): set these in /etc/mazapay-treasury.env so real
+# people can receive magic links. Unset = the link is logged (token redacted).
+# Environment=MAZAPAY_TR_SMTP_HOST=smtp.example.org
+# Environment=MAZAPAY_TR_SMTP_PORT=587
+# Environment=MAZAPAY_TR_SMTP_STARTTLS=1
+# Environment=MAZAPAY_TR_SMTP_FROM=no-reply@example.org
+# MAZAPAY_TR_SMTP_USER / MAZAPAY_TR_SMTP_PASSWORD carry credentials: put them
+# ONLY in /etc/mazapay-treasury.env (0600), never in this unit file.
 # Staging is seeded with demo data (scripts/treasury_seed_demo.py). Flip to 0
 # only after the demo organisation has been replaced with the real one.
 # Environment=MAZAPAY_TR_DEMO_MODE=0

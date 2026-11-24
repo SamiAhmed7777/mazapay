@@ -573,7 +573,12 @@ def request_magic_link(
 
     Returns `{"sent": True}` in production and `{"sent": True, "link": url}` in
     demo mode (settings.DEMO_MODE) so staging can be driven without mail.
-    Production mail delivery is deliberately out of scope for this lane.
+
+    In production the link is delivered by `mailer.send_magic_link` when an SMTP
+    relay is configured (MAZAPAY_TR_SMTP_*, see docs/treasury.md §11); otherwise
+    it is logged with the token redacted. Delivery state is audited
+    (`login_emailed` / `login_email_failed` / `login_link_logged`) but never
+    returned, so the response cannot be used to enumerate accounts.
     """
     _ensure()
     addr = _norm_email(email)
@@ -628,12 +633,58 @@ def request_magic_link(
     link = f"{origin}/treasury/auth/{token}"
     if settings.DEMO_MODE:
         return {"sent": True, "link": link}
-    LOG.info(
-        "treasury magic link for %s: %s",
-        addr,
-        link.replace(token, _redact(token)),
-    )
+    _deliver(addr, link, token, user)
     return {"sent": True}
+
+
+def _deliver(addr: str, link: str, token: str, user: Dict[str, Any]) -> None:
+    """Hand the link to the mailer, or log it; never fail the request.
+
+    Delivery state is audited (`login_emailed`, `login_email_failed`,
+    `login_link_logged`) but never returned: a caller must not be able to learn
+    whether an address exists or whether mail reached it.
+    """
+    from . import mailer  # local: keeps this module importable without SMTP config
+
+    if not mailer.configured():
+        LOG.info(
+            "treasury magic link for %s: %s (SMTP not configured; token redacted)",
+            addr,
+            link.replace(token, _redact(token)),
+        )
+        with _write_db() as conn:
+            append_audit(
+                conn,
+                actor_user_id=user["id"],
+                action="login_link_logged",
+                object_type="user",
+                object_id=user["id"],
+                detail={"delivery": "log"},
+            )
+        return
+    try:
+        mailer.send_magic_link(addr, link)
+    except Exception as exc:  # noqa: BLE001 - delivery must never fail the request
+        LOG.warning("treasury magic link delivery failed: %s", type(exc).__name__)
+        with _write_db() as conn:
+            append_audit(
+                conn,
+                actor_user_id=user["id"],
+                action="login_email_failed",
+                object_type="user",
+                object_id=user["id"],
+                detail={"delivery": "smtp", "error": type(exc).__name__},
+            )
+        return
+    with _write_db() as conn:
+        append_audit(
+            conn,
+            actor_user_id=user["id"],
+            action="login_emailed",
+            object_type="user",
+            object_id=user["id"],
+            detail={"delivery": "smtp"},
+        )
 
 
 def consume_magic_link(token: Optional[str]) -> Optional[Dict[str, Any]]:

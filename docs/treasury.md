@@ -407,12 +407,10 @@ unless you accept demo rows in it: the seeder refuses to run when it finds real
 
 ## 10. Known limits (read before promising anything)
 
-- **No production mail delivery.** Magic links are generated, audited and
-  single-use, but nothing sends email yet. In demo mode `auth.request_magic_link`
-  returns the link in-process (the HTTP login handler currently discards it, so
-  today you mint a link with the one-liner in §5); in live mode it is logged with
-  the token redacted. A real deployment needs an SMTP (or SES-style) sender wired
-  into `auth.request_magic_link`, or links issued out-of-band by an administrator.
+- **Sign-in mail needs a relay.** Magic links are generated, audited and
+  single-use. With `MAZAPAY_TR_SMTP_HOST` set they are emailed (§11); with it
+  unset they are written to the log with the token redacted (demo mode also hands
+  the link back to the caller, which is how the demo seeder's flow is driven).
 - **No bank integration.** The USD cash leg is a label, not a bank feed. Balances,
   statements and MIP CSVs describe MAZA movements and their locked USD value;
   reconciling to a bank statement is manual.
@@ -433,7 +431,9 @@ unless you accept demo rows in it: the seeder refuses to run when it finds real
 - **One process, one sqlite file.** WAL + `BEGIN IMMEDIATE` is correct for one
   writer process per service. It is not a multi-instance design.
 - **2027 reference years in demo data** are illustrative only; refs are free-form
-  text (`DR-2027-0142`), not derived from the system clock.## Completion safety
+  text (`DR-2027-0142`), not derived from the system clock.
+
+## Completion safety
 
 Two mechanisms make settlement safe when more than one request is in flight, or
 when the process dies mid-run.
@@ -466,4 +466,25 @@ left `send_uncertain` are resolved with the bridge's own reconcile path
 (`POST /payments/{id}/reconcile`), which is why the treasury records
 `payment_id` on the item whenever it has one.
 
+## 11. Sign-in mail (SMTP)
 
+Magic links are delivered by `mazapay/treasury/mailer.py` (stdlib `smtplib`).
+With no SMTP host configured the treasury keeps the previous behaviour: the link
+is written to the log with the token redacted, and demo mode hands it back to
+the caller. Configure a relay to mail real people:
+
+| variable | default | meaning |
+|---|---|---|
+| `MAZAPAY_TR_SMTP_HOST` | *(empty = disabled)* | relay host |
+| `MAZAPAY_TR_SMTP_PORT` | `587` | 587 = STARTTLS, 465 = implicit TLS |
+| `MAZAPAY_TR_SMTP_USER` / `_PASSWORD` | *(empty)* | relay login (optional for a trusted local relay) |
+| `MAZAPAY_TR_SMTP_STARTTLS` | `1` | STARTTLS on 587; ignored on 465 |
+| `MAZAPAY_TR_SMTP_FROM` | `no-reply@<hostname>` | From header |
+| `MAZAPAY_TR_SMTP_TIMEOUT` | `10` | socket timeout, seconds |
+
+Delivery state is audited — `login_emailed`, `login_email_failed`,
+`login_link_logged` — and **never** returned to the caller: the response to a
+sign-in request is identical for a known address, an unknown one, a rate-limited
+one and a failed relay, so the form cannot be used to enumerate accounts. A mail
+failure is logged by exception class only; the address and the token never reach
+the log.

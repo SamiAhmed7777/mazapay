@@ -39,3 +39,12 @@ CSRF_COOKIE = "mazapay_tr_csrf"
 
 # Name shown in the UI chrome; the demo seed sets a sample organisation.
 ORG_NAME = os.environ.get("MAZAPAY_TR_ORG_NAME", "Sample Tribal Nation")
+
+# --- magic-link mail delivery (stdlib smtplib; empty host = disabled) -------
+SMTP_HOST = os.environ.get("MAZAPAY_TR_SMTP_HOST", "")
+SMTP_PORT = _int("MAZAPAY_TR_SMTP_PORT", 587)
+SMTP_USER = os.environ.get("MAZAPAY_TR_SMTP_USER", "")
+SMTP_PASSWORD = os.environ.get("MAZAPAY_TR_SMTP_PASSWORD", "")
+SMTP_STARTTLS = _flag("MAZAPAY_TR_SMTP_STARTTLS", "1")
+SMTP_TIMEOUT = _int("MAZAPAY_TR_SMTP_TIMEOUT", 10)
+SMTP_FROM = os.environ.get("MAZAPAY_TR_SMTP_FROM", f"no-reply@{os.environ.get('HOSTNAME', 'mazapay')}")

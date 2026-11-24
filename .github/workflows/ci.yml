@@ -1,5 +1,7 @@
 name: CI
 
+# The suite is offline by design (fixed price feed, mock chain, temp sqlite).
+
 on:
   push:
   pull_request:
@@ -9,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.10", "3.11", "3.12", "3.13"]
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
