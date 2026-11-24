@@ -1083,6 +1083,95 @@ def complete_request(user, request_id) -> Dict[str, Any]:
     return _hydrate(_request_row(request_id))
 
 
+# --- account maintenance ----------------------------------------------------
+
+
+def update_account(user, account_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
+    """Change an account's name, status, policy, caps or notes (admin only)."""
+    uid = _user_id(user)
+    if _role(user) != "admin":
+        raise TreasuryError("insufficient_role", "only an administrator may edit accounts", 403)
+    if not isinstance(changes, dict) or not changes:
+        raise TreasuryError("no_changes", "nothing to change", 400)
+
+    allowed = {
+        "name", "status", "signature_policy", "cap_per_request_usd",
+        "cap_daily_usd", "award_ref", "notes",
+    }
+    unknown = sorted(set(changes) - allowed)
+    if unknown:
+        raise TreasuryError("unknown_field", "unknown field(s): " + ", ".join(unknown), 400)
+
+    acct = store.get_account(account_id)
+    if not acct:
+        raise TreasuryError("not_found", "no such account", 404)
+
+    patch: Dict[str, Any] = {}
+    if "name" in changes:
+        name = _clean_text(changes["name"], "name", required=True, limit=120)
+        patch["name"] = name
+    if "status" in changes:
+        status = str(changes["status"] or "").strip()
+        if status not in ("open", "closed", "banking_disrupted"):
+            raise TreasuryError("invalid_status", "status must be open, closed or banking_disrupted", 400)
+        patch["status"] = status
+    if "signature_policy" in changes:
+        policy = str(changes["signature_policy"] or "").strip()
+        if policy not in ("single", "dual"):
+            raise TreasuryError("invalid_policy", "policy must be single or dual", 400)
+        patch["signature_policy"] = policy
+    for cap_key in ("cap_per_request_usd", "cap_daily_usd"):
+        if cap_key in changes:
+            raw = changes[cap_key]
+            if raw in (None, ""):
+                patch[cap_key] = None
+            else:
+                try:
+                    value = _dec(raw)
+                except (ArithmeticError, ValueError):
+                    raise TreasuryError("invalid_amount", cap_key + " is not a number", 400) from None
+                if value < 0:
+                    raise TreasuryError("invalid_amount", cap_key + " must not be negative", 400)
+                patch[cap_key] = _money(value)
+    for text_key in ("award_ref", "notes"):
+        if text_key in changes:
+            patch[text_key] = _clean_text(changes[text_key], text_key, limit=MAX_NOTE)
+
+    before = {k: acct.get(k) for k in patch}
+    diff = {k: v for k, v in patch.items() if str(before.get(k)) != str(v)}
+    if not diff:
+        return _hydrate_account(acct)
+
+    with store.write_db() as conn:
+        busy = store.in_flight_requests(account_id, conn=conn)
+        if busy and ("signature_policy" in diff or diff.get("status") == "closed"):
+            refs = ", ".join(r["ref"] for r in busy[:3])
+            raise TreasuryError(
+                "account_busy",
+                "requests are still in flight on this account (%s); finish or cancel them first" % refs,
+                409,
+            )
+        if not store.update_account(conn, account_id, diff):
+            raise TreasuryError("not_found", "no such account", 404)
+        store.append_audit(
+            conn,
+            actor_user_id=uid,
+            action="account_updated",
+            object_type="account",
+            object_id=account_id,
+            detail={"before": before, "after": diff, "fields": sorted(diff)},
+        )
+    return _hydrate_account(store.get_account(account_id) or {})
+
+
+def _hydrate_account(acct: Dict[str, Any]) -> Dict[str, Any]:
+    """Account row plus the derived label the UI shows."""
+    out = dict(acct)
+    out["cap_per_request_usd"] = out.get("cap_per_request_usd") or None
+    out["cap_daily_usd"] = out.get("cap_daily_usd") or None
+    return out
+
+
 # --- pool -------------------------------------------------------------------
 
 

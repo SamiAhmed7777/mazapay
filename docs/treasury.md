@@ -416,9 +416,11 @@ unless you accept demo rows in it: the seeder refuses to run when it finds real
   reconciling to a bank statement is manual.
 - **No PDF payslips.** `/treasury/payslips/{item_id}` is printable HTML with
   print CSS. Print to PDF from the browser; there is no server-side generator.
-- **No account or cap editing UI.** Accounts, caps and policies are seeded or
-  written at the store level. Changing a cap is an operator/database task today,
-  with an audit entry expected but not automated.
+- **Creating accounts is still out-of-band.** Settings on an existing account —
+  name, status, signature policy, per-request and daily caps, award reference,
+  notes — are editable by an administrator at `/treasury/accounts/{id}/edit` or
+  `POST /api/accounts/{id}`, and each change is audited with its before/after
+  values. Creating a new account is still a seed/store-level task.
 - **Single organisation.** One install serves one nation/organisation. There is
   no tenancy column and no cross-organisation isolation; two organisations mean
   two installs.

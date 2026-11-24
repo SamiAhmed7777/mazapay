@@ -993,3 +993,47 @@ def find_outbound_by_ref(
         # cannot be a prior broadcast to adopt.
         return None
     return dict(rows[0]) if rows else None
+
+
+# --- account maintenance ----------------------------------------------------
+
+_ACCOUNT_COLUMNS = {
+    "name", "status", "signature_policy", "cap_per_request_usd",
+    "cap_daily_usd", "award_ref", "notes", "maza_address",
+}
+
+IN_FLIGHT_STATUSES = ("prepared", "processed", "pending_signatures", "authorized", "completing")
+
+
+def update_account(
+    conn: sqlite3.Connection, account_id: str, fields: Dict[str, Any]
+) -> bool:
+    """Apply a validated change to one account. Column names are whitelisted."""
+    clean: Dict[str, Any] = {}
+    for key, value in fields.items():
+        if key not in _ACCOUNT_COLUMNS:
+            raise ValueError(f"unknown account column: {key}")
+        if key in ("cap_per_request_usd", "cap_daily_usd"):
+            clean[key] = to_money(value) if value not in (None, "") else None
+        else:
+            clean[key] = value
+    if not clean:
+        return False
+    cols = ", ".join(f"{k}=?" for k in clean)
+    args: List[Any] = list(clean.values()) + [account_id]
+    return conn.execute(f"UPDATE tr_accounts SET {cols} WHERE id=?", args).rowcount == 1
+
+
+def in_flight_requests(
+    account_id: str, conn: Optional[sqlite3.Connection] = None
+) -> List[Dict[str, Any]]:
+    placeholders = ",".join("?" for _ in IN_FLIGHT_STATUSES)
+    return [
+        dict(r)
+        for r in _fetchall(
+            f"SELECT id, ref, status FROM tr_requests WHERE account_id=?"
+            f" AND status IN ({placeholders}) ORDER BY prepared_ts",
+            (account_id, *IN_FLIGHT_STATUSES),
+            conn,
+        )
+    ]

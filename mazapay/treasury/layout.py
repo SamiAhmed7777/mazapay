@@ -359,7 +359,7 @@ def render_error_page(*, title: str, user, csrf: str, nonce: str, nav_active: st
 
 
 # --------------------------------------------------------------- accounts --
-def _account_row(acc: Dict[str, Any]) -> str:
+def _account_row(acc: Dict[str, Any], *, editable: bool = False) -> str:
     kind = str(acc.get("kind") or "")
     name = acc.get("name") or kind or "Account"
     kind_label = _KIND_LABELS.get(kind, kind.replace("_", " ").title() or "Account")
@@ -370,10 +370,16 @@ def _account_row(acc: Dict[str, Any]) -> str:
     addr = str(acc.get("maza_address") or "")
     addr_html = f'<div class="mono faint">{esc(addr)}</div>' if addr else ""
     link = "/treasury/requests?account_id=" + esc(acc.get("id") or "")
+    edit_html = ""
+    if editable:
+        edit_html = (
+            '<div><a class="dim" href="/treasury/accounts/%s/edit">Edit settings</a></div>'
+            % esc(acc.get("id") or "")
+        )
     return (
         "<tr>"
         f'<td><a class="lead" href="{link}">{esc(name)}</a>'
-        f'<div class="dim">{esc(kind_label)}</div>{addr_html}</td>'
+        f'<div class="dim">{esc(kind_label)}</div>{addr_html}{edit_html}</td>'
         f'<td class="mono">{esc(code)}</td>'
         f"<td>{account_status_pill(acc)}</td>"
         f'<td class="n">{cap}</td>'
@@ -522,7 +528,8 @@ def render_accounts_page(
         ]
     )
 
-    rows = "".join(_account_row(acc) for acc in accounts) if accounts else (
+    admin = str((user or {}).get("role") or "") == "admin"
+    rows = "".join(_account_row(acc, editable=admin) for acc in accounts) if accounts else (
         '<tr><td colspan="6"><p class="empty">No accounts yet. The seed script creates the demo org; '
         "an admin can add accounts out of band.</p></td></tr>"
     )
@@ -946,4 +953,65 @@ def render_payslip_page(*, user, csrf: str, nonce: str, data: Dict[str, Any]) ->
         nav_active="requests",
         body=body,
         nonce=nonce,
+    )
+
+
+def render_account_edit_page(
+    *, user, csrf: str, nonce: str, account, error=None
+) -> str:
+    """Admin form for an account's name, status, signature policy and caps."""
+    acc = account or {}
+    status = str(acc.get("status") or "open")
+    policy = str(acc.get("signature_policy") or "dual")
+
+    def opt(value: str, label: str, current: str) -> str:
+        sel = " selected" if value == current else ""
+        return f'<option value="{esc(value)}"{sel}>{esc(label)}</option>'
+
+    body = f"""
+<div class="head">
+  <div class="grow">
+    <h1 class="ptitle">Edit account</h1>
+    <p class="sub">{esc(acc.get("name") or "")} · {esc(acc.get("code") or "")} · {esc(acc.get("kind") or "")}</p>
+  </div>
+  <div class="actions"><a class="btn btn-ghost" href="/treasury/accounts">Back to accounts</a></div>
+</div>
+{"<div class='banner' role='alert'><span class='banner-strong'>" + esc(error) + "</span></div>" if error else ""}
+<section class="card">
+  <h2 class="card-h">Account settings</h2>
+  <form method="post" action="/treasury/accounts/{esc(acc.get("id") or "")}/edit">
+    <input type="hidden" name="csrf" value="{esc(csrf)}">
+    <div class="formgrid">
+      <label class="field">Name
+        <input name="name" value="{esc(acc.get("name") or "")}" maxlength="120" required>
+      </label>
+      <label class="field">Status
+        <select name="status">{opt("open", "Open", status)}{opt("banking_disrupted", "Banking access disrupted", status)}{opt("closed", "Closed", status)}</select>
+      </label>
+      <label class="field">Signature policy
+        <select name="signature_policy">{opt("dual", "Dual (executive + council treasurer)", policy)}{opt("single", "Single (treasurer)", policy)}</select>
+      </label>
+      <label class="field">Cap per request (USD)
+        <input name="cap_per_request_usd" value="{esc(acc.get("cap_per_request_usd") or "")}" inputmode="decimal" placeholder="no cap">
+      </label>
+      <label class="field">Daily cap (USD)
+        <input name="cap_daily_usd" value="{esc(acc.get("cap_daily_usd") or "")}" inputmode="decimal" placeholder="no cap">
+      </label>
+      <label class="field">Award reference
+        <input name="award_ref" value="{esc(acc.get("award_ref") or "")}" maxlength="200" placeholder="e.g. PL 93-638">
+      </label>
+      <label class="field">Notes
+        <input name="notes" value="{esc(acc.get("notes") or "")}" maxlength="500">
+      </label>
+    </div>
+    <p class="note">Every change is written to the audit trail with the before and after value.
+      A signature-policy change or closing the account is refused while requests are still in
+      flight on it.</p>
+    <div class="actions"><button class="btn btn-primary" type="submit">Save changes</button></div>
+  </form>
+</section>
+"""
+    return render_shell(
+        title=f"Edit {acc.get('code') or 'account'} · MazaPay Treasury",
+        user=user, csrf=csrf, nav_active="accounts", body=body, nonce=nonce,
     )

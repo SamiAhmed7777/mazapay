@@ -86,6 +86,8 @@ _ROUTES: Tuple[Tuple[str, str, str], ...] = (
     ("POST", r"^/treasury/logout$", "_h_logout"),
     # --- core screens (lane 3)
     ("GET", r"^/treasury/accounts$", "_h_accounts"),
+    ("GET", r"^/treasury/accounts/(?P<aid>" + _ID + r")/edit$", "_h_account_edit"),
+    ("POST", r"^/treasury/accounts/(?P<aid>" + _ID + r")/edit$", "_h_account_edit_post"),
     ("GET", r"^/treasury/requests$", "_h_requests"),
     ("GET", r"^/treasury/requests/(?P<rid>" + _ID + r")$", "_h_request"),
     ("POST", r"^/treasury/requests/(?P<rid>" + _ID + r")/(?P<action>process|submit|cancel|complete|sign)$",
@@ -101,6 +103,7 @@ _ROUTES: Tuple[Tuple[str, str, str], ...] = (
     # --- JSON API
     ("GET", r"^/api/me$", "_a_me"),
     ("GET", r"^/api/accounts$", "_a_accounts"),
+    ("POST", r"^/api/accounts/(?P<aid>" + _ID + r")$", "_a_account_update"),
     ("GET", r"^/api/requests$", "_a_requests"),
     ("POST", r"^/api/requests$", "_a_request_create"),
     ("GET", r"^/api/requests/(?P<rid>" + _ID + r")$", "_a_request"),
@@ -944,6 +947,61 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._html(200, _render_sibling("render_audit", user=user, csrf=csrf, nonce=self._nonce,
                                         nav_active="audit", title="Audit trail", data=data))
+
+
+    # -- handlers: account maintenance ---------------------------------------
+    def _h_account_edit(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
+        user, csrf = self._require_page_session()
+        if str(user.get("role") or "") != "admin":
+            raise HttpError(403, "insufficient_role", "administrator role required", page=True)
+        account_id = groups.get("aid") or ""
+        code = (query.get("error") or [""])[0]
+        try:
+            account = _service().get_account(user, account_id)
+        except Exception as exc:  # noqa: BLE001
+            treasury_error = _treasury_error_class()
+            if treasury_error is not None and isinstance(exc, treasury_error):
+                raise HttpError(getattr(exc, "status", 404), getattr(exc, "code", "not_found"),
+                                str(exc), page=True) from None
+            raise
+        self._html(200, layout.render_account_edit_page(
+            user=user, csrf=csrf, nonce=self._nonce, account=account,
+            error=_human_error(code) if code else None,
+        ))
+
+    def _h_account_edit_post(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
+        user, _csrf = self._require_page_session()
+        if str(user.get("role") or "") != "admin":
+            raise HttpError(403, "insufficient_role", "administrator role required", page=True)
+        form = self._read_form()
+        if not self._check_csrf(form.get("csrf")):
+            raise HttpError(403, "csrf_failed", "the form expired; reload and try again", page=True)
+        account_id = groups.get("aid") or ""
+        changes: Dict[str, Any] = {}
+        for field in ("name", "status", "signature_policy", "cap_per_request_usd",
+                      "cap_daily_usd", "award_ref", "notes"):
+            if field in form:
+                changes[field] = form.get(field)
+        try:
+            _service().update_account(user, account_id, changes)
+        except Exception as exc:  # noqa: BLE001
+            treasury_error = _treasury_error_class()
+            if treasury_error is not None and isinstance(exc, treasury_error):
+                self._redirect("/treasury/accounts/%s/edit?error=%s"
+                               % (account_id, getattr(exc, "code", "error")))
+                return
+            _ERROR_LOG.exception("account update failed")
+            self._redirect("/treasury/accounts/%s/edit?error=internal_error" % account_id)
+            return
+        self._redirect("/treasury/accounts")
+
+    def _a_account_update(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
+        user = self._require_api_session()
+        body = self._read_json()
+        if not isinstance(body, dict):
+            raise HttpError(400, "invalid_body", "expected a JSON object")
+        account = _service().update_account(user, groups.get("aid") or "", body)
+        self._json(200, {"account": account})
 
     def _h_users(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
         user, csrf = self._require_page_session()
