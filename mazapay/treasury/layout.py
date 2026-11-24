@@ -1052,7 +1052,9 @@ def render_access_page(*, user, csrf: str, nonce: str, sessions, gate_user=None)
             "<tr>"
             f'<td><b>{esc(s.get("user_name") or s.get("user_id"))}</b>'
             f'<div class="dim">{esc(s.get("user_email") or "")} · {esc(s.get("role") or "")}</div></td>'
-            f'<td><span class="mono">{esc(str(s.get("ip") or "—"))}</span></td>'
+            f'<td><span class="mono">{esc(str(s.get("ip") or "—"))}</span>'
+            + (f'<div class="dim">gate: {esc(str(s.get("gate_user")))}</div>' if s.get("gate_user") else "")
+            + "</td>"
             f'<td class="dim">{esc(ua)}</td>'
             f'<td class="n">{_ts_short(s.get("created_ts"))}</td>'
             f'<td class="n">{_ts_short(s.get("last_seen_ts"))}</td>'

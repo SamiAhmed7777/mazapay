@@ -682,7 +682,8 @@ class Handler(BaseHTTPRequestHandler):
     def _h_auth_consume(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
         token = groups.get("token") or ""
         try:
-            result = _auth().consume_magic_link(token)
+            _ip, _ua, _gate = self._client_facts()
+            result = _auth().consume_magic_link(token, ip=_ip, user_agent=_ua, gate_user=_gate)
         except ImportError:
             self._redirect("/treasury/login?error=unavailable")
             return
@@ -952,6 +953,30 @@ class Handler(BaseHTTPRequestHandler):
                                         nav_active="audit", title="Audit trail", data=data))
 
 
+
+
+    # -- request facts: who is calling, through what --------------------------
+    def _client_facts(self) -> Tuple[str, str, Optional[str]]:
+        """(ip, user_agent, gate_user).
+
+        Behind the reverse proxy the socket peer is always 127.0.0.1, so the
+        forwarded chain is used — but only when the peer really is the local
+        proxy, never for a direct connection that could forge the header.
+        """
+        peer = (self.client_address[0] if self.client_address else "") or ""
+        ip = peer
+        gate = None
+        if peer in ("127.0.0.1", "::1", "localhost"):
+            # Only the local reverse proxy may speak for the client: it sets
+            # X-Forwarded-For and X-Gate-User itself. A direct connection —
+            # or any non-loopback peer — cannot forge either one.
+            forwarded = self.headers.get("X-Forwarded-For") or ""
+            first = forwarded.split(",")[0].strip() if forwarded else ""
+            if first:
+                ip = first
+            gate = (self.headers.get("X-Gate-User") or "").strip() or None
+        ua = (self.headers.get("User-Agent") or "")[:300]
+        return ip, ua, gate
 
     # -- handlers: access tracking -------------------------------------------
     def _h_access(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:

@@ -687,7 +687,12 @@ def _deliver(addr: str, link: str, token: str, user: Dict[str, Any]) -> None:
         )
 
 
-def consume_magic_link(token: Optional[str]) -> Optional[Dict[str, Any]]:
+def consume_magic_link(
+    token: Optional[str],
+    ip: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    gate_user: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
     """Redeem a magic link exactly once.
 
     Returns `{"user": {...}, "session_token": "<raw>"}` or None. Expired,
@@ -745,7 +750,9 @@ def consume_magic_link(token: Optional[str]) -> Optional[Dict[str, Any]]:
             )
             return None
 
-    session_token = create_session(user["id"])
+    session_token = create_session(
+        user["id"], ip=ip, user_agent=user_agent, gate_user=gate_user
+    )
     with _write_db() as conn:
         append_audit(
             conn, actor_user_id=user["id"], action="login_ok",
@@ -769,7 +776,10 @@ def new_csrf_token() -> str:
 
 
 def create_session(
-    user_id: str, ip: Optional[str] = None, user_agent: Optional[str] = None
+    user_id: str,
+    ip: Optional[str] = None,
+    user_agent: Optional[str] = None,
+    gate_user: Optional[str] = None,
 ) -> str:
     """Open a session; returns the RAW cookie token (only its hash is stored)."""
     _ensure()
@@ -778,7 +788,8 @@ def create_session(
     with _write_db() as conn:
         conn.execute(
             "INSERT INTO tr_sessions (id, user_id, token_hash, created_ts,"
-            " expires_ts, revoked_ts, ip, user_agent) VALUES (?,?,?,?,?,NULL,?,?)",
+            " expires_ts, revoked_ts, ip, user_agent, gate_user)"
+            " VALUES (?,?,?,?,?,NULL,?,?,?)",
             (
                 _new_id("ses"),
                 user_id,
@@ -787,6 +798,7 @@ def create_session(
                 now + float(settings.SESSION_TTL),
                 ip,
                 user_agent,
+                gate_user,
             ),
         )
     return token
@@ -916,6 +928,7 @@ def list_sessions(user: Dict[str, Any]) -> List[Dict[str, Any]]:
                 "revoked_ts": row.get("revoked_ts"),
                 "ip": row.get("ip"),
                 "user_agent": row.get("user_agent"),
+                "gate_user": row.get("gate_user"),
                 "state": (
                     "revoked" if row.get("revoked_ts")
                     else "expired" if row["expires_ts"] <= now

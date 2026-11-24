@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS tr_sessions (
     revoked_ts REAL,
     ip TEXT,
     user_agent TEXT,
+    gate_user TEXT,
     last_seen_ts REAL
 );
 CREATE TABLE IF NOT EXISTS tr_accounts (
@@ -311,6 +312,8 @@ def init_db() -> None:
         scols = {row[1] for row in conn.execute("PRAGMA table_info(tr_sessions)")}
         if "last_seen_ts" not in scols:
             conn.execute("ALTER TABLE tr_sessions ADD COLUMN last_seen_ts REAL")
+        if "gate_user" not in scols:
+            conn.execute("ALTER TABLE tr_sessions ADD COLUMN gate_user TEXT")
 
 
 def _new_id(prefix: str) -> str:
