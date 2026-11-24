@@ -1,0 +1,39 @@
+<div class="head">
+  <div class="grow">
+    <h1 class="ptitle">Accounts</h1>
+    <p class="sub">The organisation's own MAZA: cash legs, drawdown authority and the donor-funded pool. Federal award funds are documentary only.</p>
+  </div>
+  <div class="actions">{{actions}}</div>
+</div>
+{{banners}}
+<section class="kpis" aria-label="Account totals">{{kpis}}</section>
+<div class="cols2">
+  <div class="stack">
+    <section class="card">
+      <h2 class="card-h">Cash legs and accounts <span class="right faint">{{as_of}}</span></h2>
+      <div class="tbl-wrap">
+        <table class="tbl">
+          <thead>
+            <tr><th>Account</th><th>Code</th><th>Status</th><th class="n">Cap / request</th><th class="n">Cap / day</th><th>Policy</th></tr>
+          </thead>
+          <tbody>{{account_rows}}</tbody>
+        </table>
+      </div>
+      <p class="note" style="margin-top:12px">Money is quoted in USD and settled in MAZA at the locked rate. Drawdown authority stays locked until the Council countersigns.</p>
+    </section>
+    <section class="card">
+      <h2 class="card-h">Recent activity <span class="right"><a href="/treasury/audit">Full audit trail</a></span></h2>
+      {{activity}}
+    </section>
+  </div>
+  <div class="stack">
+    <section class="card">
+      <h2 class="card-h">Needs your signature <span class="count">{{sig_count}}</span></h2>
+      {{sig_rows}}
+    </section>
+    <section class="card">
+      <h2 class="card-h">Humanitarian pool <span class="right"><a href="/treasury/pool">Open pool</a></span></h2>
+      {{pool}}
+    </section>
+  </div>
+</div>

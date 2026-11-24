@@ -1,0 +1,32 @@
+<div class="head">
+  <div class="grow">
+    <h1 class="ptitle">Users</h1>
+    <p class="sub">Who can read, prepare, process, sign and complete treasury requests. Admin only.</p>
+  </div>
+  <div class="actions"><a class="btn btn-ghost" href="/treasury/accounts">Back to accounts</a></div>
+</div>
+{{banners}}
+<section class="card">
+  <h2 class="card-h">People <span class="count">{{user_count}}</span></h2>
+  <table class="tbl">
+    <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th class="n">Action</th></tr></thead>
+    <tbody>{{user_rows}}</tbody>
+  </table>
+</section>
+<section class="card">
+  <h2 class="card-h">Add a user</h2>
+  <form method="post" action="/treasury/users" class="stack">
+    <input type="hidden" name="csrf" value="{{csrf}}">
+    <div class="formgrid">
+      <label class="field">Name<input type="text" name="name" required maxlength="120" autocomplete="off"></label>
+      <label class="field">Email<input type="email" name="email" required maxlength="254" autocomplete="off"></label>
+      <label class="field">Role
+        <select name="role">
+{{role_options}}
+        </select>
+      </label>
+    </div>
+    {{form_error}}
+    <div class="row"><button class="btn btn-primary" type="submit">Create user</button><span class="faint">A magic link is issued on first login; no password is stored.</span></div>
+  </form>
+</section>

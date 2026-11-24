@@ -280,6 +280,9 @@ class TestPaymentUri(unittest.TestCase):
             qr.payment_uri(None, "1")  # type: ignore[arg-type]
 
 
+# Opens the bridge store and binds a loopback socket: skip where either
+# capability is missing (read-only reviewer sandboxes).
+@_env.net_gate
 class TestQrEndpoint(unittest.TestCase):
     """GET /orders/{id}/qr.svg over a real HTTP server (token-auth mode)."""
 

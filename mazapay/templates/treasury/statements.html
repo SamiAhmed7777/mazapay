@@ -1,0 +1,64 @@
+<div class="head">
+  <div class="grow">
+    <h1 class="ptitle">Statements</h1>
+    <p class="sub">{{KIND_LABEL}} · {{MONTH_LABEL}} · every amount is the USD value at its locked rate</p>
+  </div>
+  <div class="actions">
+    <a class="btn btn-ghost" href="/api/statements?kind={{KIND}}&amp;month={{MONTH}}&amp;format=csv" download>Download CSV</a>
+    <a class="btn btn-ghost" href="/treasury/pool">Donor pool</a>
+  </div>
+</div>
+
+<div class="row" role="group" aria-label="Ledger">
+  <a class="{{K_REQ_CLASS}}" href="/treasury/statements?kind=requests&amp;month={{MONTH}}"{{K_REQ_ARIA}}>Requests</a>
+  <a class="{{K_POOL_CLASS}}" href="/treasury/statements?kind=pool&amp;month={{MONTH}}"{{K_POOL_ARIA}}>Donor pool</a>
+  <span class="faint">month shown: {{MONTH_LABEL}}</span>
+</div>
+
+<form class="card" method="get" action="/treasury/statements">
+  <h2 class="card-h">Period <span class="right faint">UTC months</span></h2>
+  <div class="formgrid">
+    <label class="field">Month
+      <input type="month" name="month" value="{{MONTH}}" min="{{MIN_MONTH}}" max="{{MAX_MONTH}}">
+    </label>
+    <div class="row">
+      <button class="btn btn-primary btn-sm" type="submit">View month</button>
+      <span class="note">Dates are the day the request was prepared, in UTC.</span>
+    </div>
+  </div>
+  <input type="hidden" name="kind" value="{{KIND}}">
+</form>
+
+<section class="card" aria-labelledby="st-rows-h">
+  <h2 class="card-h" id="st-rows-h">{{ROW_COUNT}} <span class="right faint">{{KIND_LABEL}} · {{MONTH}}</span></h2>
+  <div class="tbl-wrap">
+    <table class="tbl" aria-label="{{KIND_LABEL}} statement for {{MONTH_LABEL}}, amounts in USD at the locked rate">
+      <thead>
+        <tr>
+          <th>Ref</th>
+          <th class="n">Date</th>
+          <th>Account</th>
+          <th>Kind</th>
+          <th>Status</th>
+          <th class="n">USD</th>
+          <th class="n">MAZA</th>
+          <th class="n">Rate</th>
+          <th>Purpose</th>
+        </tr>
+      </thead>
+      <tbody>
+{{ROWS}}
+      </tbody>
+      <tfoot>
+        <tr>
+          <th colspan="5" scope="row">Total</th>
+          <td class="n">{{TOT_USD}}</td>
+          <td class="n">{{TOT_MAZA}}</td>
+          <td class="n"></td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <p class="note">The CSV download carries the same rows and neutralises cells for MIP and Excel (a leading <span class="mono">'</span> on <span class="mono">= + - @</span>).</p>
+</section>

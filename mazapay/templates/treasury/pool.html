@@ -1,0 +1,39 @@
+<div class="head">
+  <div class="grow">
+    <h1 class="ptitle">Donor pool</h1>
+    <p class="sub">Donor-funded · contains no Tribal funds</p>
+  </div>
+  <div class="actions">
+    <a class="btn btn-ghost" href="/treasury/statements?kind=pool">Pool statements</a>
+    <a class="btn btn-ghost" href="/api/statements?kind=pool&amp;format=csv" download>Export reconciliation (MIP)</a>
+  </div>
+</div>
+
+<div class="banner" role="note">
+  <span class="banner-strong">Donor-funded · contains no Tribal funds</span>
+  <span class="banner-body">Every dollar here comes from voluntary donors. Tribal and federal award money never passes through this pool, and the statement is exported in MIP's shape so a funder can reconcile it line by line.</span>
+</div>
+
+<section class="kpis" aria-label="Pool totals">
+{{KPIS}}
+</section>
+
+<div class="cols2">
+  <section class="card" aria-labelledby="cats-h">
+    <h2 class="card-h" id="cats-h">Spending by category <span class="right faint">{{MONTH_LABEL}}</span></h2>
+    <div class="cats tr-cats">
+{{CATS}}
+    </div>
+    <p class="note">Section 5 categories only. Stipends draw on this pool and stay bound by the account's per-request cap.</p>
+  </section>
+
+{{DONATE_SECTION}}
+</div>
+
+<section class="card" aria-labelledby="stip-h">
+  <h2 class="card-h" id="stip-h">Recent stipend payments <span class="count">{{STIPEND_COUNT}}</span></h2>
+  <div class="tbl-wrap">
+{{STIPENDS}}
+  </div>
+</section>
+<style nonce="{{NONCE}}">{{BAR_CSS}}</style>

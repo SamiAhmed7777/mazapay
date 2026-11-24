@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b0d12">
+<title>{{title}}</title>
+<link rel="icon" type="image/png" href="/static/mazacoin-180.png">
+<link rel="apple-touch-icon" href="/static/mazacoin-180.png">
+<link rel="stylesheet" href="/static/treasury.css">
+</head>
+<body data-csrf="{{csrf}}">
+<div class="shell">
+  <header class="topbar">
+    <span class="brand"><span class="brand-mark" aria-hidden="true"></span>MazaPay<span class="brand-sub">Treasury</span></span>
+    <span class="org">{{org}}</span>
+    {{mode}}
+    <span class="spacer"></span>
+    {{user}}
+  </header>
+  <nav class="nav" aria-label="Treasury sections">
+{{nav}}
+  </nav>
+  {{banner}}
+  <main class="page" id="main">
+{{body}}
+  </main>
+</div>
+<script nonce="{{nonce}}" src="/static/treasury.js" defer></script>
+</body>
+</html>

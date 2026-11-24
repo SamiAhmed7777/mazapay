@@ -1,3 +1,6 @@
+import os
+import subprocess
+import sys
 """Tests for the sandbox capability probes themselves.
 
 Ungated by design: these use mocks, never real sockets or temp dirs, so they
@@ -85,6 +88,34 @@ class TestCanBindSocket(unittest.TestCase):
     def test_gate_reason_strings_present(self):
         self.assertTrue(_env.SKIP_REASON)
         self.assertTrue(_env.SOCKET_SKIP_REASON)
+
+
+class TestReadOnlySuite(unittest.TestCase):
+    """Run the whole suite with no temp dir and no sockets: it must exit 0.
+
+    This is the exact check a read-only reviewer performs. Every test that
+    writes a file, opens a database or binds a socket must be decorated
+    @requires_writable / @requires_writable_and_net, so the discovered suite
+    skips instead of erroring.
+    """
+
+    def test_whole_suite_runs_readonly(self):
+        if os.environ.get("MAZAPAY_SANDBOX_SELF_TEST") == "1":
+            self.skipTest("nested run")
+        here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {
+            **os.environ,
+            "MAZAPAY_TEST_TMP": "/nonexistent-readonly-dir",
+            "TMPDIR": "/nonexistent-readonly-dir",
+            "MAZAPAY_SANDBOX_SELF_TEST": "1",
+        }
+        proc = subprocess.run(
+            [sys.executable, "-m", "unittest", "discover", "-s", "tests"],
+            cwd=here, capture_output=True, text=True, timeout=600, env=env,
+        )
+        tail = (proc.stdout + proc.stderr)[-1500:]
+        self.assertEqual(proc.returncode, 0, "read-only suite failed:\n" + tail)
+        self.assertIn("OK (skipped=", proc.stderr + proc.stdout, tail)
 
 
 if __name__ == "__main__":

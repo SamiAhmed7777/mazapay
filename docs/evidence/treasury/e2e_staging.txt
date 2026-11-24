@@ -1,0 +1,88 @@
+Live staging instance: 127.0.0.1:18501 (demo mode, fixed price 0.00125 USD/MAZA)
+Run at:  2026-11-24T10:33:06Z
+Command: python3 scripts/treasury_e2e_staging.py   (shipped in this repository)
+
+$ curl -s http://127.0.0.1:18501/healthz
+{"ok":true,"mode":"demo","service":"mazapay-treasury"}
+
+$ python3 -c "from mazapay.treasury import store; print(store.verify_chain())"
+(True, None)
+
+$ MAZAPAY_TR_DB=<demo db> MAZAPAY_TR_DEMO_MODE=1 python3 scripts/treasury_e2e_staging.py
+healthz: {"ok":true,"mode":"demo","service":"mazapay-treasury"}
+audit chain: (True, None)
+request: DR-2027-0142 req_23ad4bb3743a
+council sign: 200 | status: authorized | quorum: {'policy': 'dual', 'required': ['executive', 'council_treasurer'], 'approved': ['executive', 'council_treasurer'], 'reached': True}
+complete: 200 | status: completed
+final: completed | signatures: 2 | completed_ts: True
+audit: ['request_completed', 'completion_started', 'request_authorized', 'signature_recorded', 'signature_recorded', 'request_submitted', 'request_processed', 'request_created'] (8 rows)
+pool: 9300.00 USD | 6 donors
+
+exit codes: health=0 e2e=0 chain=0
+
+The script mints the magic link by importing mazapay.treasury.auth against the same
+database (demo mode only); link redemption and every role action then happen over HTTP.
+
+Artifact revision (sha256 prefix, 16 hex) for EVERY file under mazapay/ and tests/, plus the two treasury scripts:
+72855f1277fd3675  mazapay/__init__.py
+beddffa3cf6472c7  mazapay/api.py
+07774f3d1cb5a261  mazapay/assets/mazacoin-180.png
+cd1d53c7213df113  mazapay/assets/mazacoin-64.png
+36fa8b4666ff1065  mazapay/assets/mazacoin-accepted.png
+297b571ca7129b16  mazapay/assets/mazacoin-wordmark.png
+5752d74e12ee77a3  mazapay/assets/treasury.css
+8b80741597b0c3a9  mazapay/assets/treasury.js
+8a002f2a3ef194b8  mazapay/check_daemon.py
+d113198d3170e226  mazapay/config.py
+9cc2625236fb5016  mazapay/mazad.py
+65d91231362ea68d  mazapay/mip_export.py
+04e3796708c3d52e  mazapay/notifier.py
+5cfef07bd7b37f70  mazapay/paylinks.py
+272c3fbeaf8ae22d  mazapay/pricing.py
+2b2b8f3fdfca855c  mazapay/qr.py
+c54565bf7ba2915c  mazapay/qrdecode.py
+b02a64cbe66d84e8  mazapay/store.py
+4a9bd430b084e734  mazapay/templates/checkout.html
+69dd299ea62e7aa1  mazapay/templates/treasury/accounts.html
+945509153ff22a57  mazapay/templates/treasury/audit.html
+6a0a8ae4f9096742  mazapay/templates/treasury/base.html
+f172659f81be7148  mazapay/templates/treasury/login.html
+ba862564123076f2  mazapay/templates/treasury/pool.html
+ab4405ec184986f6  mazapay/templates/treasury/request.html
+4a03d6af28f2e2a6  mazapay/templates/treasury/statements.html
+fbdbc314748dca54  mazapay/templates/treasury/users.html
+df260ab49a704a64  mazapay/treasury/__init__.py
+1a3e15db48aa11ff  mazapay/treasury/auth.py
+f676d83f0762ebf1  mazapay/treasury/http.py
+904828cff99b7925  mazapay/treasury/layout.py
+50108270305b9812  mazapay/treasury/pages_pool.py
+ad078e1350f5c826  mazapay/treasury/server.py
+8fd6c64bfb7cab9d  mazapay/treasury/service.py
+3ed6a8ea8a27f833  mazapay/treasury/settings.py
+889420d05233e0c4  mazapay/treasury/statements.py
+bc56a85c5a8281c0  mazapay/treasury/store.py
+127a17268abda14b  mazapay/vendor/__init__.py
+9f4ed1dd201dcb92  mazapay/vendor/qrcodegen.py
+8cad8c09dc54ef04  mazapay/watcher.py
+b8362428a0f3fb2e  scripts/treasury_e2e_staging.py
+95b88901fb706196  scripts/treasury_seed_demo.py
+bc409e92a28a524c  tests/_sandbox.py
+1f48b88955cedf70  tests/test_admin.py
+fb1979cea0121679  tests/test_alerts.py
+04c3d039618d30ad  tests/test_check_daemon.py
+cc40196e0c7c832c  tests/test_checkout_ui.py
+44b1860d2a50c38c  tests/test_fuzz.py
+4782382c8af10817  tests/test_hardening.py
+d4acbe5cce838bf4  tests/test_mazapay.py
+c11da3a30fec0d81  tests/test_paylinks.py
+8267a02f5df17bde  tests/test_price_feed.py
+61e3811f1159193a  tests/test_qr.py
+d417ff3c77937506  tests/test_qr_decode.py
+a3286592fd7315ba  tests/test_sandbox_gates.py
+7519ae341433284c  tests/test_smoke.py
+209ff7de76c3f8b3  tests/test_treasury_auth.py
+d21e54c68591ffd4  tests/test_treasury_http.py
+0c116e1669a22eb2  tests/test_treasury_service.py
+cde45e978ad18583  tests/test_treasury_statements.py
+b0456995969c4653  tests/test_treasury_store.py
+5aa845aab5bd64a6  tests/test_treasury_ui.py

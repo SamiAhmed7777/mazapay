@@ -1,0 +1,89 @@
+# MazaPay treasury workspace — STAGING systemd unit.
+#
+# NOT installed by this repo's current release lane: scripts and docs describe
+# it, nothing enables it. Enabling/starting this unit is an operator action
+# (see docs/treasury.md § "Staging deployment"). It is modelled on
+# deploy/mazapay.service and keeps the same hardening directives so the two
+# services differ only where the treasury genuinely needs something else.
+#
+# Runs the treasury portal as a second process over the SAME sqlite file as
+# the bridge. That sharing is deliberate and is the architecture (CONTRACT §3):
+# a completed drawdown is recorded in the bridge's `orders` table, and the
+# statements join request items to those orders. Never point MAZAPAY_TR_DB (or
+# MAZAPAY_DB below) at a copy — a split database would show every disbursement
+# as missing.
+#
+# Deployment-specific values (MAZAPAY_TR_BASE_URL for magic-link origins, the
+# admin seed address, any org name) live in /etc/mazapay-treasury.env (0600),
+# never in this repo.
+
+[Unit]
+Description=MazaPay treasury workspace (staging) — accounts, dual-signature requests, pool
+After=network-online.target
+Wants=network-online.target
+# The treasury writes disbursements through the bridge API in-process, so it
+# reads/writes the same database the bridge owns. Ordering is for tidiness,
+# not correctness: sqlite in WAL mode tolerates either start order.
+After=mazapay.service
+
+[Service]
+Type=simple
+User=mazapay
+Group=mazapay
+WorkingDirectory=/opt/mazapay/current
+EnvironmentFile=-/etc/mazapay-treasury.env
+# Loopback-only behind the Caddy TLS proxy, exactly like the bridge: the
+# session cookie is `Secure` and magic links are built from
+# MAZAPAY_TR_BASE_URL, which must be the public https origin.
+Environment=MAZAPAY_TR_HOST=127.0.0.1
+Environment=MAZAPAY_TR_PORT=18501
+# Shared file, on purpose — see the header comment.
+Environment=MAZAPAY_TR_DB=/var/lib/mazapay/mazapay.sqlite3
+# The treasury process also calls the bridge API to disburse, and that module
+# resolves its own MAZAPAY_DB. Without this line the disbursement would be
+# recorded in config.py's dev default (/tmp/mazapay-dev.sqlite3) instead of the
+# shared file — the treasury would report "sent" while the bridge never saw it.
+Environment=MAZAPAY_DB=/var/lib/mazapay/mazapay.sqlite3
+Environment=MAZAPAY_TR_COOKIE_SECURE=1
+# Staging is seeded with demo data (scripts/treasury_seed_demo.py). Flip to 0
+# only after the demo organisation has been replaced with the real one.
+# Environment=MAZAPAY_TR_DEMO_MODE=0
+StateDirectory=mazapay
+ExecStart=/usr/bin/python3 -m mazapay.treasury.server
+Restart=always
+RestartSec=3
+# Hardening identical to the bridge unit. The treasury serves HTML/JSON and
+# talks to sqlite; it does not spawn subprocesses, execute memory, or need
+# capabilities. @system-service covers CPython + sqlite3 (epoll/futex/file I/O,
+# AF_INET/AF_UNIX sockets, clone for threads); blocked syscalls return EPERM
+# (SystemCallErrorNumber) so an unforeseen python need surfaces as a clean
+# OSError rather than an opaque SIGSYS kill.
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+ProtectHome=true
+ReadWritePaths=/var/lib/mazapay
+UMask=0077
+ProtectClock=true
+RestrictNamespaces=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=true
+LockPersonality=true
+RestrictRealtime=true
+PrivateDevices=true
+ProtectKernelLogs=true
+ProtectHostname=true
+RemoveIPC=true
+KeyringMode=private
+
+[Install]
+WantedBy=multi-user.target

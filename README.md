@@ -256,6 +256,23 @@ are the ones with retry semantics).
   it is clearly flagged (`/health` → `chain_mode: mock`) and payment
   simulation is impossible when a real wallet is configured.
 
+## Treasury workspace (staging)
+
+A second process (`python3 -m mazapay.treasury.server`, `127.0.0.1:18501`) serves the
+organisation side — accounts, dual-signature drawdowns, donor-funded elder stipends,
+statements, an append-only audit chain — over this same sqlite file. See
+[`docs/treasury.md`](docs/treasury.md); the unit ships uninstalled in
+`deploy/treasury.service`.
+
+```bash
+python3 scripts/treasury_seed_demo.py --db /tmp/treasury-demo.sqlite3
+MAZAPAY_TR_DB=/tmp/treasury-demo.sqlite3 MAZAPAY_TR_DEMO_MODE=1 MAZAPAY_TR_COOKIE_SECURE=0 \
+    python3 -m mazapay.treasury.server
+```
+
+Boundaries: the organisation's **own** MAZA only; `federal_oversight` accounts are
+documentary (authorised, never broadcast); money is `Decimal` end to end.
+
 ## License
 
 MIT

@@ -1,0 +1,48 @@
+<div class="head">
+  <div class="grow">
+    <p class="sub"><a href="/treasury/requests">Requests</a> / <span class="mono">{{ref}}</span></p>
+    <h1 class="ptitle">{{purpose}}</h1>
+    <p class="sub">{{kind_label}} · {{account_name}} <span class="mono">({{account_code}})</span> · prepared by {{prepared_by}} {{prepared_ts}}</p>
+  </div>
+  <div class="actions">{{actions}}</div>
+</div>
+{{banners}}
+<section class="card" aria-label="Amount">
+  <h2 class="card-h">Amount at locked rate <span class="right">{{rate_line}}</span></h2>
+  <div class="kpis">
+    <div class="kpi"><div class="k">USD total</div><div class="v">{{usd_total}}</div><div class="d">charged to {{account_code}}</div></div>
+    <div class="kpi"><div class="k">MAZA total</div><div class="v">{{maza_total}}</div><div class="d">{{rate_source}}</div></div>
+    <div class="kpi"><div class="k">Status</div><div class="v">{{status_pill}}</div><div class="d">{{status_hint}}</div></div>
+  </div>
+</section>
+<section class="card" aria-label="Approval rail">
+  <h2 class="card-h">Approval rail <span class="right faint">{{policy_line}}</span></h2>
+  <div class="chain">
+{{chain}}
+  </div>
+</section>
+<div class="cols2">
+  <div class="stack">
+    <section class="card">
+      <h2 class="card-h">Items <span class="count">{{item_count}}</span></h2>
+      <table class="tbl">
+        <thead><tr><th>Payee</th><th>Category</th><th class="n">USD</th><th class="n">MAZA</th><th>Status</th><th>Tx</th></tr></thead>
+        <tbody>{{item_rows}}</tbody>
+      </table>
+    </section>
+    <section class="card">
+      <h2 class="card-h">Audit trail</h2>
+      {{audit}}
+    </section>
+  </div>
+  <div class="stack">
+    <section class="card">
+      <h2 class="card-h">Signatures <span class="count">{{sig_count}}</span></h2>
+      {{sig_rows}}
+    </section>
+    <section class="card">
+      <h2 class="card-h">Scope</h2>
+      <p class="note">{{scope_note}}</p>
+    </section>
+  </div>
+</div>

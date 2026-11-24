@@ -1,0 +1,54 @@
+<div class="head">
+  <div class="grow">
+    <h1 class="ptitle">Audit trail</h1>
+    <p class="sub">Append-only. Every row carries the hash of the row before it.</p>
+  </div>
+  <div class="actions">
+    <a class="btn btn-ghost" href="/treasury/audit">Clear filters</a>
+  </div>
+</div>
+
+<div class="banner" role="note">
+  <span class="banner-strong">The chain is verifiable</span>
+  <span class="banner-body"><span class="mono">hash = sha256(prev_hash + canonical_json(record))</span>, and the first row's <span class="mono">prev_hash</span> is 64 zeros. The database aborts UPDATE and DELETE on this table, so a rewritten row breaks every hash after it.</span>
+</div>
+
+<form class="card" method="get" action="/treasury/audit">
+  <h2 class="card-h">Filter <span class="right faint">limit {{LIMIT}}</span></h2>
+  <div class="formgrid">
+    <label class="field">Object type
+      <input type="text" name="object_type" value="{{OBJ_TYPE}}" placeholder="request, account, donation" autocomplete="off" spellcheck="false">
+    </label>
+    <label class="field">Object id
+      <input type="text" name="object_id" value="{{OBJ_ID}}" placeholder="req_ab12cd34ef56" autocomplete="off" spellcheck="false">
+    </label>
+    <div class="row">
+      <button class="btn btn-primary btn-sm" type="submit">Apply</button>
+    </div>
+  </div>
+  <input type="hidden" name="limit" value="{{LIMIT}}">
+{{FILTER_NOTE}}
+</form>
+
+<section class="card" aria-labelledby="au-rows-h">
+  <h2 class="card-h" id="au-rows-h">{{ROW_COUNT}} <span class="right faint">newest first</span></h2>
+  <div class="tbl-wrap">
+    <table class="tbl" aria-label="Audit rows with their hash chain links">
+      <thead>
+        <tr>
+          <th class="n">#</th>
+          <th class="n">Time (UTC)</th>
+          <th>Actor</th>
+          <th>Action</th>
+          <th>Object</th>
+          <th>Hash</th>
+          <th>Prev hash</th>
+        </tr>
+      </thead>
+      <tbody>
+{{ROWS}}
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Detail payloads are JSON and are shown truncated here; the full record is in the audit table and at <span class="mono">/api/audit</span>.</p>
+</section>
