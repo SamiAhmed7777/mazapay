@@ -72,12 +72,10 @@ organisation "Sample Tribal Nation". All amounts, rates, transaction ids
 transcripts are generated. No real person, tribal government, account number or
 transaction from any live deployment appears in this repository.
 
-## Files added by this note (sha256 of the shipped bytes)
+## Files added by this note
 
-```
-29dbed47d8950fad4442fb4de0c9e61e1ea489970111ce91b3c36542e076bd8e  docs/evidence/treasury/release-identity.txt
-4d4f1afba2a03bfa594a09b6b3f2f2c97069c8919424299564bb86674b4eed94  docs/evidence/treasury/git-tree.txt
-```
-
-`git-tree.txt` (92 entries) is `git ls-tree -r --full-tree 28478bc`, the graded
-commit, so every file of the graded tree can be hashed and compared.
+`git-tree.txt` (92 entries, sha256 `4d4f1afba2a03bfa594a09b6b3f2f2c97069c8919424299564bb86674b4eed94`)
+is `git ls-tree -r --full-tree 28478bc` — the graded commit — so every file of the
+graded tree can be hashed and compared. This file deliberately carries no hash of
+itself: a self-referential checksum cannot be correct, and the git tree listing is
+the authoritative manifest.
