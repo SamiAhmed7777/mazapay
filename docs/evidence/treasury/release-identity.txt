@@ -1,0 +1,83 @@
+# Release identity — treasury publication
+
+This note records the git identity of the tree it ships in. It is deliberately
+written so a reviewer without `.git` can verify it: `git-tree.txt` in this
+directory lists every tracked file with its git blob sha1, and a git blob id is
+`sha1("blob <length>\0" + file bytes)`, so each listed hash can be recomputed
+from the files themselves.
+
+## Verbatim command output (pre-publication)
+
+Run in the worktree, on the commit that is the parent of the commit adding this
+file:
+
+```
+$ git rev-parse HEAD
+28478bc08f4524330f8e04f4ac7f2a246e5aa9c9
+
+$ git rev-parse HEAD^{tree}
+1474f55013cf8619ac8c4a131302d95f2b8fd992
+
+$ git rev-parse HEAD~1
+1a97f3aa58793e628b8248163adbe02308a74611
+
+$ git merge-base --is-ancestor 1a97f3a HEAD; echo $?
+0
+
+$ git remote get-url origin
+https://github.com/SamiAhmed7777/mazapay.git
+
+$ git status --porcelain | wc -l
+0
+
+$ git diff --stat 1a97f3a..HEAD | tail -1
+ 38 files changed, 13547 insertions(+)
+```
+
+The commit above — `28478bc` — is the A-graded treasury change set
+(`urn:ump:bxgqmve6phf7t5hzyvsgxccjhxyyvon6sp3laztt5lgdrxlpeiqq`). The evidence
+files in this directory carry a sha256 manifest of every file under `mazapay/`
+and `tests/`, so graded bytes and shipped bytes can be matched file by file.
+
+## Revision added by this note
+
+This file is added by a follow-up commit whose parent is `28478bc`; that commit
+changes documentation only (this file and `git-tree.txt`) and re-lists the full
+tree in `git-tree.txt`. The publication target is branch `master` of
+`https://github.com/SamiAhmed7777/mazapay.git`, whose tip was `1a97f3a` before
+this work and becomes the commit carrying these notes after the push. The push
+is verified immediately afterwards with:
+
+```
+$ git ls-remote origin refs/heads/master
+```
+
+and that output is reported to the operator with the commit id.
+
+## Pre-existing public identifiers
+
+`deploy/service/install-bridge.sh` contains the production hostname
+`mazapay.sami-ahmed.net` and the host address `194.163.161.162`. Both entered
+the repository in commit `132870e` ("deploy/service: staged-cutover installer
+for the bridge"), which is already public; this treasury work adds no new host,
+domain, address, credential or key. They are deployment configuration for the
+operator's own service, not secrets, and they stay as published.
+
+## Fictional demo identities
+
+`scripts/treasury_seed_demo.py` creates users at `example.org` and
+`example.test`, payees such as "Elder one" and "Northline Construction", and the
+organisation "Sample Tribal Nation". All amounts, rates, transaction ids
+(`mock00000…`) and audit hashes in the demo database and in the evidence
+transcripts are generated. No real person, tribal government, account number or
+transaction from any live deployment appears in this repository.
+
+## Files added by this note (sha256 of the shipped bytes)
+
+```
+29dbed47d8950fad4442fb4de0c9e61e1ea489970111ce91b3c36542e076bd8e  docs/evidence/treasury/release-identity.txt
+4d4f1afba2a03bfa594a09b6b3f2f2c97069c8919424299564bb86674b4eed94  docs/evidence/treasury/git-tree.txt
+```
+
+`git-tree.txt` (92 entries) is `git ls-tree -r --full-tree 28478bc`, the graded
+commit, so every file of the graded tree can be hashed and compared.
