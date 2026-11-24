@@ -14,8 +14,9 @@ INSERT OR IGNORE, so re-running the script never duplicates anything and
 never rewrites a row an operator has since edited.
 
 Refuses to run against production:
-  * any resolved path containing /var/lib/mazapay needs
-    --i-know-this-is-not-production;
+  * a path inside the bridge's own /var/lib/mazapay needs
+    --i-know-this-is-not-production (a sibling such as
+    /var/lib/mazapay-treasury is a different service and is allowed);
   * a database holding real bridge orders (orders.kind = 'in') needs --force.
 
 Degrades instead of crashing while sibling lanes are still in flight: the
@@ -41,6 +42,16 @@ RATE = Decimal("0.00125")
 RATE_SOURCE = "fixed-demo"
 CENT = Decimal("0.01")
 PROD_MARKER = "/var/lib/mazapay"
+
+
+def _under_production(path: str) -> bool:
+    """True only for the bridge's own state dir, not sibling directories.
+
+    Path-boundary aware: /var/lib/mazapay/... is production, while
+    /var/lib/mazapay-treasury/... is a separate service's state dir.
+    """
+    resolved = os.path.realpath(path)
+    return resolved == PROD_MARKER or resolved.startswith(PROD_MARKER + os.sep)
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Running this file by path puts scripts/ on sys.path[0], not the repo root —
 # add the root so `import mazapay...` resolves exactly as it does for the
@@ -707,7 +718,7 @@ def main(argv=None) -> int:
     db = args.db or os.environ.get("MAZAPAY_TR_DB") or os.path.join(REPO_ROOT, "mazapay-demo.sqlite3")
     db = os.path.abspath(os.path.expanduser(db))
 
-    if PROD_MARKER in os.path.realpath(db) and not args.i_know_this_is_not_production:
+    if _under_production(db) and not args.i_know_this_is_not_production:
         print(f"refusing: {db} resolves under {PROD_MARKER} (production).\n"
               "Pass --i-know-this-is-not-production only for a deliberately disposable copy.",
               file=sys.stderr)

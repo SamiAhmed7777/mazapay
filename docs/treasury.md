@@ -288,6 +288,16 @@ separation of duties, caps, federal guard, completion), `test_treasury_statement
   and an explicit revoke on logout. Cookie `mazapay_tr` (plus `mazapay_tr_csrf`)
   is `HttpOnly`, `SameSite=Lax`, and `Secure` unless `MAZAPAY_TR_COOKIE_SECURE=0`
   for plain-HTTP localhost.
+- **Access is visible.** Each session stores IP, client and (updated at most
+  once a minute) `last_seen_ts`. `/treasury/access` — admin only, backed by
+  `GET /api/sessions` — lists every session with its owner, role, IP, client,
+  sign-in time, last activity, expiry and state, and can **revoke** any live
+  session; a revocation writes `session_revoked` to the audit trail naming both
+  the administrator and the affected user. Sign-in events themselves
+  (`login_ok`, `login_failed`, `login_rate_limited`, `login_emailed`,
+  `login_email_failed`, `login_link_logged`) are already audit rows. The web
+  server in front records its own gate identity per request in its access log;
+  that identity is not yet copied into the treasury's audit rows.
 - **CSRF**: every POST requires the `X-CSRF-Token` header (or the paired form
   field) matching the CSRF cookie for the session; comparisons are
   `hmac.compare_digest`, never `==`.

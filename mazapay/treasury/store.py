@@ -60,7 +60,8 @@ CREATE TABLE IF NOT EXISTS tr_sessions (
     expires_ts REAL NOT NULL,
     revoked_ts REAL,
     ip TEXT,
-    user_agent TEXT
+    user_agent TEXT,
+    last_seen_ts REAL
 );
 CREATE TABLE IF NOT EXISTS tr_accounts (
     id TEXT PRIMARY KEY,
@@ -307,6 +308,9 @@ def init_db() -> None:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(tr_request_items)")}
         if "broadcast_ref" not in cols:
             conn.execute("ALTER TABLE tr_request_items ADD COLUMN broadcast_ref TEXT")
+        scols = {row[1] for row in conn.execute("PRAGMA table_info(tr_sessions)")}
+        if "last_seen_ts" not in scols:
+            conn.execute("ALTER TABLE tr_sessions ADD COLUMN last_seen_ts REAL")
 
 
 def _new_id(prefix: str) -> str:
@@ -1037,3 +1041,37 @@ def in_flight_requests(
             conn,
         )
     ]
+
+
+# --- sessions (who is signed in) --------------------------------------------
+
+
+def touch_session(conn: sqlite3.Connection, session_id: str, *, min_gap: float = 60.0) -> None:
+    """Record activity, at most once per `min_gap` seconds per session."""
+    now = time.time()
+    conn.execute(
+        "UPDATE tr_sessions SET last_seen_ts=?"
+        " WHERE id=? AND (last_seen_ts IS NULL OR last_seen_ts < ?)",
+        (now, session_id, now - min_gap),
+    )
+
+
+def session_rows(limit: int = 200) -> List[Dict[str, Any]]:
+    """Live and recently ended sessions, newest activity first."""
+    return [
+        dict(r)
+        for r in _fetchall(
+            "SELECT s.*, COALESCE(u.name, s.user_id) AS user_name,"
+            " COALESCE(u.email, '') AS user_email, COALESCE(u.role, '') AS user_role"
+            " FROM tr_sessions s LEFT JOIN tr_users u ON u.id = s.user_id"
+            " ORDER BY COALESCE(s.last_seen_ts, s.created_ts) DESC LIMIT ?",
+            (max(1, min(int(limit or 200), 1000)),),
+        )
+    ]
+
+
+def revoke_session_by_id(conn: sqlite3.Connection, session_id: str) -> bool:
+    return conn.execute(
+        "UPDATE tr_sessions SET revoked_ts=? WHERE id=? AND revoked_ts IS NULL",
+        (time.time(), session_id),
+    ).rowcount == 1

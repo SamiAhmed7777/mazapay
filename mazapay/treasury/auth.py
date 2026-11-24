@@ -808,6 +808,10 @@ def resolve_session(token: Optional[str]) -> Optional[Dict[str, Any]]:
         if row["expires_ts"] <= now:
             return None
         user = _get_user(conn, row["user_id"])
+        try:
+            tr_store.touch_session(conn, row["id"])
+        except Exception:  # noqa: BLE001 - activity tracking must never block a login
+            pass
     if not user or not user["active"]:
         return None
     session = {
@@ -889,3 +893,54 @@ __all__ = [
     "check_csrf",
     "reset_rate_limits",
 ]
+
+
+def list_sessions(user: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every session with its owner, activity time and state. Admin only."""
+    if str(user.get("role") or "") != "admin":
+        raise _err("insufficient_role", 403, "only an administrator may see sessions")
+    now = _now()
+    rows = tr_store.session_rows()
+    out = []
+    for row in rows:
+        out.append(
+            {
+                "id": row["id"],
+                "user_id": row["user_id"],
+                "user_name": row.get("user_name"),
+                "user_email": row.get("user_email"),
+                "role": row.get("user_role"),
+                "created_ts": row["created_ts"],
+                "last_seen_ts": row.get("last_seen_ts"),
+                "expires_ts": row["expires_ts"],
+                "revoked_ts": row.get("revoked_ts"),
+                "ip": row.get("ip"),
+                "user_agent": row.get("user_agent"),
+                "state": (
+                    "revoked" if row.get("revoked_ts")
+                    else "expired" if row["expires_ts"] <= now
+                    else "active"
+                ),
+            }
+        )
+    return out
+
+
+def revoke_session_by_id(admin: Dict[str, Any], session_id: str) -> None:
+    """Revoke someone else's session, with an audit row naming both parties."""
+    if str(admin.get("role") or "") != "admin":
+        raise _err("insufficient_role", 403, "only an administrator may revoke sessions")
+    with _write_db() as conn:
+        row = conn.execute("SELECT * FROM tr_sessions WHERE id=?", (session_id,)).fetchone()
+        if row is None:
+            raise _err("not_found", 404, "no such session")
+        if not tr_store.revoke_session_by_id(conn, session_id):
+            return
+        append_audit(
+            conn,
+            actor_user_id=admin["id"],
+            action="session_revoked",
+            object_type="session",
+            object_id=session_id,
+            detail={"user_id": row["user_id"], "by": admin["id"], "ip": row["ip"]},
+        )

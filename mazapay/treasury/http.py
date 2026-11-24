@@ -98,6 +98,8 @@ _ROUTES: Tuple[Tuple[str, str, str], ...] = (
     ("GET", r"^/treasury/statements$", "_h_statements"),
     ("GET", r"^/treasury/audit$", "_h_audit"),
     ("GET", r"^/treasury/users$", "_h_users"),
+    ("GET", r"^/treasury/access$", "_h_access"),
+    ("POST", r"^/treasury/access/(?P<sid>" + _ID + r")/revoke$", "_h_access_revoke"),
     ("POST", r"^/treasury/users$", "_h_users_create"),
     ("POST", r"^/treasury/users/(?P<uid>" + _ID + r")/deactivate$", "_h_user_deactivate"),
     # --- JSON API
@@ -115,6 +117,7 @@ _ROUTES: Tuple[Tuple[str, str, str], ...] = (
     ("GET", r"^/api/statements$", "_a_statements"),
     ("GET", r"^/api/audit$", "_a_audit"),
     ("GET", r"^/api/users$", "_a_users"),
+    ("GET", r"^/api/sessions$", "_a_sessions"),
     ("POST", r"^/api/users$", "_a_user_create"),
     ("POST", r"^/api/users/(?P<uid>" + _ID + r")/deactivate$", "_a_user_deactivate"),
 )
@@ -948,6 +951,41 @@ class Handler(BaseHTTPRequestHandler):
         self._html(200, _render_sibling("render_audit", user=user, csrf=csrf, nonce=self._nonce,
                                         nav_active="audit", title="Audit trail", data=data))
 
+
+
+    # -- handlers: access tracking -------------------------------------------
+    def _h_access(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
+        user, csrf = self._require_page_session()
+        if str(user.get("role") or "") != "admin":
+            raise HttpError(403, "insufficient_role", "administrator role required", page=True)
+        sessions = _auth().list_sessions(user)
+        self._html(200, layout.render_access_page(
+            user=user, csrf=csrf, nonce=self._nonce, sessions=sessions,
+            gate_user=(self.headers.get("X-Gate-User") or "").strip() or None,
+        ))
+
+    def _h_access_revoke(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
+        user, _csrf = self._require_page_session()
+        if str(user.get("role") or "") != "admin":
+            raise HttpError(403, "insufficient_role", "administrator role required", page=True)
+        form = self._read_form()
+        if not self._check_csrf(form.get("csrf")):
+            raise HttpError(403, "csrf_failed", "the form expired; reload and try again", page=True)
+        try:
+            _auth().revoke_session_by_id(user, groups.get("sid") or "")
+        except Exception as exc:  # noqa: BLE001
+            treasury_error = _treasury_error_class()
+            if treasury_error is not None and isinstance(exc, treasury_error):
+                self._redirect("/treasury/access?error=" + str(getattr(exc, "code", "error")))
+                return
+            _ERROR_LOG.exception("revoke session failed")
+            self._redirect("/treasury/access?error=internal_error")
+            return
+        self._redirect("/treasury/access")
+
+    def _a_sessions(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:
+        user = self._require_api_session()
+        self._json(200, {"sessions": _auth().list_sessions(user)})
 
     # -- handlers: account maintenance ---------------------------------------
     def _h_account_edit(self, groups: Dict[str, str], query: Dict[str, List[str]]) -> None:

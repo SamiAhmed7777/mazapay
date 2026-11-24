@@ -47,6 +47,11 @@ NAV_ITEMS: Sequence[tuple[str, str, str]] = (
     ("users", "/treasury/users", "Users"),
 )
 
+# Admin-only navigation, appended at render time: a treasurer never sees it.
+ADMIN_NAV_ITEMS: Sequence[tuple[str, str, str]] = (
+    ("access", "/treasury/access", "Access"),
+)
+
 # Contract §5, rendered server-side. The service re-checks; this only decides
 # which controls are visible.
 _ACTION_ROLES = {
@@ -291,7 +296,10 @@ def render_shell(
     """
     nav_active = active or nav_active
     nav_rows: List[str] = []
-    for key, href, label in NAV_ITEMS:
+    items = list(NAV_ITEMS)
+    if str((user or {}).get("role") or "") == "admin":
+        items.extend(ADMIN_NAV_ITEMS)
+    for key, href, label in items:
         is_active = key == nav_active
         cls = ' class="nav-on"' if is_active else ""
         current = ' aria-current="page"' if is_active else ""
@@ -1014,4 +1022,70 @@ def render_account_edit_page(
     return render_shell(
         title=f"Edit {acc.get('code') or 'account'} · MazaPay Treasury",
         user=user, csrf=csrf, nav_active="accounts", body=body, nonce=nonce,
+    )
+
+
+def _ts_short(value) -> str:
+    try:
+        import datetime
+
+        return datetime.datetime.fromtimestamp(float(value), datetime.timezone.utc).strftime("%d %b %H:%M UTC")
+    except (TypeError, ValueError, OSError):
+        return "—"
+
+
+def render_access_page(*, user, csrf: str, nonce: str, sessions, gate_user=None) -> str:
+    """Who is signed in, from where, and the revoke control."""
+    rows = []
+    for s in sessions or []:
+        state = str(s.get("state") or "")
+        pill = {"active": "pill-ok", "expired": "pill-mut", "revoked": "pill-red"}.get(state, "pill-mut")
+        ua = str(s.get("user_agent") or "")[:60] or "—"
+        action = ""
+        if state == "active" and str(s.get("user_id")) != str((user or {}).get("id")):
+            action = (
+                f'<form method="post" action="/treasury/access/{esc(s.get("id"))}/revoke" class="inline">'
+                f'<input type="hidden" name="csrf" value="{esc(csrf)}">'
+                '<button class="btn btn-sm btn-ghost" type="submit">Revoke</button></form>'
+            )
+        rows.append(
+            "<tr>"
+            f'<td><b>{esc(s.get("user_name") or s.get("user_id"))}</b>'
+            f'<div class="dim">{esc(s.get("user_email") or "")} · {esc(s.get("role") or "")}</div></td>'
+            f'<td><span class="mono">{esc(str(s.get("ip") or "—"))}</span></td>'
+            f'<td class="dim">{esc(ua)}</td>'
+            f'<td class="n">{_ts_short(s.get("created_ts"))}</td>'
+            f'<td class="n">{_ts_short(s.get("last_seen_ts"))}</td>'
+            f'<td class="n">{_ts_short(s.get("expires_ts"))}</td>'
+            f'<td><span class="pill {pill}">{esc(state)}</span></td>'
+            f"<td>{action}</td>"
+            "</tr>"
+        )
+    body = f"""
+<div class="head">
+  <div class="grow">
+    <h1 class="ptitle">Access</h1>
+    <p class="sub">Who is signed in, from where, and when they were last active. Revoking ends a session immediately.</p>
+  </div>
+</div>
+<div class="banner" role="note">
+  <span class="banner-strong">Two layers are recorded.</span>
+  <span class="banner-body">The web server in front of the treasury records the gate user for every request in its own access log{(" (this request came through as <span class='mono'>" + esc(gate_user) + "</span>)") if gate_user else ""}.
+  Below is the treasury's own session list: sign-in events (successful, failed, rate-limited, mail failures) are in the audit trail, and each row here can be revoked.</span>
+</div>
+<section class="card">
+  <h2 class="card-h">Sessions <span class="count">{len(rows)}</span></h2>
+  <div class="tbl-wrap">
+    <table class="tbl">
+      <thead><tr><th>Who</th><th>IP</th><th>Client</th><th class="n">Signed in</th><th class="n">Last seen</th><th class="n">Expires</th><th>State</th><th></th></tr></thead>
+      <tbody>
+      {"".join(rows) if rows else '<tr><td colspan="8"><p class="empty">No sessions yet. Sign in once and it appears here.</p></td></tr>'}
+      </tbody>
+    </table>
+  </div>
+</section>
+"""
+    return render_shell(
+        title="Access · MazaPay Treasury", user=user, csrf=csrf,
+        nav_active="access", body=body, nonce=nonce,
     )
