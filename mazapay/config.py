@@ -36,6 +36,42 @@ PRICE_TIMEOUT_SECONDS = _int("MAZAPAY_PRICE_TIMEOUT", 8)
 # audit trail, and MIP export descriptions.
 ALLOW_FIXED_PRICE = os.environ.get("MAZAPAY_ALLOW_FIXED_PRICE", "0") in ("1", "true", "yes")
 
+# --- what a MAZA amount is worth in other currencies (DISPLAY ONLY) ---------
+# Never used to price an order, lock a quote or move money: checkout stays
+# USD-quoted and MAZA-settled. These only choose where the "what 1 USD is worth
+# in CUR" table comes from for the worth lines on the checkout and treasury
+# pages, and how long a fetched table may be reused.
+#   frankfurter  Frankfurter v2 — dated reference rates published by central
+#                banks and other official sources; only its fiat quotes
+#                ("currency" entries) are offered
+#   erapi        open.er-api.com v6 — one document, currency codes only
+#   none         the worth lines are off
+# Pointing MAZAPAY_FX_FRANKFURTER_URL at a self-hosted instance keeps the data
+# path on our own servers. Each service's terms apply to whoever is selected.
+FX_SOURCE = os.environ.get("MAZAPAY_FX_SOURCE", "frankfurter")  # frankfurter|erapi|none
+FX_FRANKFURTER_URL = os.environ.get(
+    "MAZAPAY_FX_FRANKFURTER_URL", "https://api.frankfurter.dev"
+).rstrip("/")
+FX_ERAPI_URL = os.environ.get(
+    "MAZAPAY_FX_ERAPI_URL", "https://open.er-api.com/v6/latest/USD"
+)
+FX_TIMEOUT_SECONDS = _int("MAZAPAY_FX_TIMEOUT", 6)
+FX_MAX_BYTES = _int("MAZAPAY_FX_MAX_BYTES", 2000000)
+# A table is reused as-is for this long, then served from cache while ONE
+# background thread refreshes it; past FX_MAX_AGE it is no longer shown.
+FX_CACHE_SECONDS = _int("MAZAPAY_FX_CACHE_SECONDS", 3600)
+FX_MAX_AGE_SECONDS = _int("MAZAPAY_FX_MAX_AGE", 7 * 86400)
+# After a failed fetch, wait this long before trying again (a dead feed must
+# not turn every page view into a network attempt).
+FX_RETRY_SECONDS = _int("MAZAPAY_FX_RETRY", 30)
+# The MAZA/USD price behind the worth lines is the bridge's own price, read
+# through a short cache; it is not shown when older than WORTH_PRICE_MAX_AGE.
+WORTH_PRICE_CACHE_SECONDS = _int("MAZAPAY_WORTH_PRICE_CACHE", 60)
+WORTH_PRICE_MAX_AGE_SECONDS = _int("MAZAPAY_WORTH_PRICE_MAX_AGE", 900)
+# How long a treasury page waits for a first value. The public checkout page
+# never waits: it renders without the line and has it on a later view.
+WORTH_WAIT_SECONDS = _float("MAZAPAY_WORTH_WAIT", 2.5)
+
 # --- auth ------------------------------------------------------------------
 # When set, all SPENDING/ADMIN endpoints require 'Authorization: Bearer <token>'.
 # Public without a token: GET / (checkout page), GET /health, and the
