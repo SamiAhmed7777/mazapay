@@ -10,6 +10,7 @@ link status observes it via the paylinks status-sync hook.
 Mirrors tests/test_smoke.py's server pattern: one shared HTTP server over a
 temp store, net-gated so restricted sandboxes skip cleanly.
 """
+import itertools
 import json
 import unittest
 import urllib.error
@@ -34,6 +35,9 @@ TOKEN = "paylinks-test-token"
 class TestPaymentLinks(unittest.TestCase):
     """Merchant link CRUD + public pay page + buyer checkout + settlement."""
 
+    # One fresh per-IP cap slot per test instance; see setUp.
+    _CAP_SLOTS = itertools.count(1)
+
     @classmethod
     def setUpClass(cls):
         store.init_db()
@@ -52,12 +56,21 @@ class TestPaymentLinks(unittest.TestCase):
         cls.pool.shutdown(wait=True)
         config.API_TOKEN = cls._old_token
 
+    def setUp(self):
+        """A fresh client IP per test: intake caps key on X-Forwarded-For's
+        first hop (the deploy binds loopback behind a proxy) and the suite's
+        store is shared by every module in the process, and one test below
+        parks orders AT the per-IP cap - so each test takes its own slot from
+        a counter. Not hash(): str hashing is salted per process, so two tests
+        could draw one bucket and the second's checkout got 429 (GitHub run
+        45905355750)."""
+        n = next(self._CAP_SLOTS) - 1
+        self._client_ip = f"10.250.{n // 255}.{n % 255 + 1}"
+
     # -- helpers --------------------------------------------------------------
     def _ip(self) -> str:
-        """A stable per-test client IP: intake caps key on X-Forwarded-For's
-        first hop (the deploy binds loopback behind a proxy), so each test
-        gets its own cap slot and cannot starve a later one."""
-        return f"10.{abs(hash(self._testMethodName)) % 250}.0.1"
+        """This test's own client IP (one cap slot per test; see setUp)."""
+        return self._client_ip
 
     def _req_headers(
         self,
@@ -302,7 +315,7 @@ class TestPaymentLinks(unittest.TestCase):
         self.assertNotIn("<script>alert(1)", page)
         # a hostile memo must not reach the order ref either (neutral tag)
         status, order = self._req("POST", f"/pay/{lid}/checkout", {}, token=None)
-        self.assertEqual(status, 201)
+        self.assertEqual(status, 201, order)
         self.assertEqual(order["ref"], "paylink")
         # nothing about the merchant surface leaks to the public page
         self.assertNotIn("Authorization", page)
