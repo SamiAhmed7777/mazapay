@@ -15,6 +15,7 @@ import json
 import unittest
 import urllib.error
 import urllib.request
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
@@ -239,17 +240,20 @@ class TestPaymentLinks(unittest.TestCase):
 
     # -- idempotency -------------------------------------------------------------
     def test_idempotency_key_replays_same_link(self):
+        # unique per run: the module must stay re-runnable against a shared
+        # store (a fixed literal would replay an old pass's link with 200)
+        key = f"paylinks-idem-{uuid.uuid4().hex[:12]}"
         s1, l1 = self._req(
             "POST",
             "/links",
-            {"usd_amount": "5.00", "memo": "idem", "idempotency_key": "paylinks-idem-1"},
+            {"usd_amount": "5.00", "memo": "idem", "idempotency_key": key},
         )
-        self.assertEqual(s1, 201)
+        self.assertEqual(s1, 201, l1)
         # same key, different body: the ORIGINAL link comes back with 200
         s2, l2 = self._req(
             "POST",
             "/links",
-            {"usd_amount": "9.00", "memo": "changed", "idempotency_key": "paylinks-idem-1"},
+            {"usd_amount": "9.00", "memo": "changed", "idempotency_key": key},
         )
         self.assertEqual(s2, 200)
         self.assertEqual(l1["link_id"], l2["link_id"])

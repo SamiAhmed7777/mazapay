@@ -129,7 +129,8 @@ class TestStore(unittest.TestCase):
         self.assertEqual(expired["status"], "expired")
 
     def test_audit_is_append_only_at_schema_level(self):
-        with sqlite3.connect(config.DB_PATH) as conn:
+        conn = sqlite3.connect(config.DB_PATH)
+        try:
             conn.execute(
                 "INSERT INTO audit (ts, entity, entity_id, event, detail) VALUES (?,?,?,?,?)",
                 (1.0, "t", "t", "seed", "{}"),
@@ -141,6 +142,8 @@ class TestStore(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 conn.execute("DELETE FROM audit WHERE id=?", (row[0],))
             conn.rollback()  # the seed row insert itself is rolled back
+        finally:
+            conn.close()
 
     def test_export_state_tracking(self):
         o = store.create_order("in", 3.0, 1500.0, 0.002, "fixed", address="tMAZA-EX")
